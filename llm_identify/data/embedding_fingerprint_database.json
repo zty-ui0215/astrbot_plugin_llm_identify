@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "description": "User-editable embedding or semantic-neighborhood baseline database. Empty by default.",
+  "embedding_backend": null,
+  "vectors": [],
+  "clusters": []
+}

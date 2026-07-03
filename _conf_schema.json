@@ -1,0 +1,62 @@
+{
+  "default_timeout": {
+    "description": "Timeout in seconds for each probe request.",
+    "type": "int",
+    "hint": "Recommended: 30-120",
+    "default": 60
+  },
+  "page_provider_id": {
+    "description": "Provider ID used by the web panel. Leave empty to use the current/default provider when AstrBot exposes one.",
+    "type": "string",
+    "hint": "Example: openai-default",
+    "default": ""
+  },
+  "enable_protocol_probe": {
+    "description": "Enable protocol behavior probes.",
+    "type": "bool",
+    "default": true
+  },
+  "enable_token_probe": {
+    "description": "Enable token-accounting probes by default. Full audits always enable token probes even when this is false.",
+    "type": "bool",
+    "default": false
+  },
+  "enable_fingerprint_probe": {
+    "description": "Enable LLM fingerprint probes by default. Full audits always enable fingerprint probes even when this is false.",
+    "type": "bool",
+    "default": false
+  },
+  "fingerprint_profile": {
+    "description": "Fingerprint probe breadth: light, standard, or exhaustive.",
+    "type": "string",
+    "hint": "light | standard | exhaustive",
+    "default": "standard"
+  },
+  "fingerprint_repeats": {
+    "description": "Repeat count for each fingerprint probe. Higher values improve mixed-route detection but cost more requests.",
+    "type": "int",
+    "hint": "Recommended: 1-5",
+    "default": 3
+  },
+  "enable_auxiliary_llm_judge": {
+    "description": "Reserved for optional auxiliary-LLM judging. Deterministic scoring remains authoritative.",
+    "type": "bool",
+    "default": false
+  },
+  "auxiliary_judge_provider_id": {
+    "description": "Optional AstrBot provider ID used as the auxiliary LLM judge for deep fingerprint matching. Leave empty to use the page/current provider when available.",
+    "type": "string",
+    "hint": "Example: openai-judge-provider",
+    "default": ""
+  },
+  "enable_context_probe": {
+    "description": "Reserved for future context-window sentinel probes. Currently disabled.",
+    "type": "bool",
+    "default": false
+  },
+  "strict_mode": {
+    "description": "Apply a more conservative confidence penalty for failed probes.",
+    "type": "bool",
+    "default": false
+  }
+}

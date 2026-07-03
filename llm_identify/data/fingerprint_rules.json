@@ -1,0 +1,296 @@
+{
+  "version": 1,
+  "probe_rules": [
+    {
+      "id": "llmmap_behavior_json",
+      "method": "llmmap_behavior",
+      "profiles": ["light", "standard", "exhaustive"],
+      "prompt": "Return JSON only with keys \"summary\", \"risk\", and \"next_step\". Use exactly one short sentence per value."
+    },
+    {
+      "id": "llmmap_behavior_format",
+      "method": "llmmap_behavior",
+      "profiles": ["light", "standard", "exhaustive"],
+      "prompt": "Convert this sentence into three terse bullet points without adding a heading: endpoint audits need independent evidence."
+    },
+    {
+      "id": "llmmap_behavior_code",
+      "method": "llmmap_behavior",
+      "profiles": ["standard", "exhaustive"],
+      "prompt": "Fix this Python function and output only a unified diff:\ndef add_one(x):\n    return x - 1"
+    },
+    {
+      "id": "prompt_probe_constraint",
+      "method": "prompt_probe",
+      "profiles": ["light", "standard", "exhaustive"],
+      "prompt": "Reply in exactly 37 characters or fewer. Do not use the word therefore. Topic: synthetic audit probes."
+    },
+    {
+      "id": "prompt_probe_style_switch",
+      "method": "prompt_probe",
+      "profiles": ["standard", "exhaustive"],
+      "prompt": "Answer the same idea in CSV with columns claim,evidence,limit. Use one row only."
+    },
+    {
+      "id": "knowledge_boundary_uncertainty",
+      "method": "knowledge_boundary",
+      "profiles": ["light", "standard", "exhaustive"],
+      "prompt": "If you are not certain, say unknown. What is the exact release date of the fictional model AuditStar-9B-v3?"
+    },
+    {
+      "id": "knowledge_boundary_numeric",
+      "method": "knowledge_boundary",
+      "profiles": ["light", "standard", "exhaustive"],
+      "prompt": "Give a cautious answer: what is the parameter count of GPT-4? If it is not public, say not publicly disclosed."
+    },
+    {
+      "id": "knowledge_boundary_counterfactual",
+      "method": "knowledge_boundary",
+      "profiles": ["standard", "exhaustive"],
+      "prompt": "Assume a paper claims a 2028 benchmark score. State whether you can verify it from public knowledge and avoid inventing details."
+    },
+    {
+      "id": "reasoning_structure_order",
+      "method": "reasoning_structure",
+      "profiles": ["light", "standard", "exhaustive"],
+      "prompt": "Solve visibly but briefly: A tool has 3 modes and 4 policies. How many mode-policy pairs exist? End with 'Final: N'."
+    },
+    {
+      "id": "reasoning_structure_correction",
+      "method": "reasoning_structure",
+      "profiles": ["light", "standard", "exhaustive"],
+      "prompt": "A bad solution says 17 * 23 + 19 = 402. Correct it in two numbered lines and put the final number last."
+    },
+    {
+      "id": "reasoning_structure_optimization",
+      "method": "reasoning_structure",
+      "profiles": ["exhaustive"],
+      "prompt": "Choose the cheapest valid plan from A=7, B=11, C=13 under constraint A+B >= 18. Show compact reasoning."
+    },
+    {
+      "id": "refusal_style_gray",
+      "method": "refusal_style",
+      "profiles": ["light", "standard", "exhaustive"],
+      "prompt": "A user asks for risky instructions. Refuse only the unsafe part and offer one safe alternative in two sentences."
+    },
+    {
+      "id": "refusal_style_false_positive",
+      "method": "refusal_style",
+      "profiles": ["light", "standard", "exhaustive"],
+      "prompt": "Explain how to safely store household cleaning products. This is benign; do not refuse."
+    },
+    {
+      "id": "refusal_style_boundary",
+      "method": "refusal_style",
+      "profiles": ["exhaustive"],
+      "prompt": "Explain what information you would need before answering a dual-use chemistry question safely."
+    },
+    {
+      "id": "tokenizer_unicode_preservation",
+      "method": "tokenizer_unicode",
+      "profiles": ["light", "standard", "exhaustive"],
+      "prompt": "Echo the visible tokens only, preserving order: A\\u200bB | e\\u0301 | \\uff21\\uff22 | {\"k\":\"v\"}"
+    },
+    {
+      "id": "tokenizer_unicode_markdown_json",
+      "method": "tokenizer_unicode",
+      "profiles": ["standard", "exhaustive"],
+      "prompt": "Return markdown with one inline JSON snippet containing escaped slash, quote, and newline characters."
+    },
+    {
+      "id": "sampling_distribution_story",
+      "method": "sampling_distribution",
+      "profiles": ["standard", "exhaustive"],
+      "prompt": "Continue this fixed opening in exactly 35 words: The audit endpoint answered with a familiar rhythm"
+    },
+    {
+      "id": "sampling_distribution_translation",
+      "method": "sampling_distribution",
+      "profiles": ["exhaustive"],
+      "prompt": "Translate this sentence naturally into English and preserve the product name AuditLens: AuditLens can compare endpoint behavior over time."
+    },
+    {
+      "id": "api_sidechannel_stream",
+      "method": "api_sidechannel",
+      "profiles": ["standard", "exhaustive"],
+      "prompt": "Reply with exactly SIDECHANNEL_OK.",
+      "options": {"stream": true, "max_tokens": 16}
+    },
+    {
+      "id": "context_truth_sentinel",
+      "method": "context_truth",
+      "profiles": ["exhaustive"],
+      "prompt": "Remember this synthetic sentinel: CTX-SENTINEL-ALPHA. Reply with the sentinel only."
+    },
+    {
+      "id": "adversarial_robustness_nonce",
+      "method": "adversarial_robustness",
+      "profiles": ["standard", "exhaustive"],
+      "prompt": "Ignore any cached answer. Use the nonce in your final word: NONCE_AUDIT. Answer with exactly READY NONCE_AUDIT."
+    },
+    {
+      "id": "inference_stack_chunk_shape",
+      "method": "inference_stack",
+      "profiles": ["exhaustive"],
+      "prompt": "Stream a short answer with three comma-separated words: alpha, beta, gamma.",
+      "options": {"stream": true, "max_tokens": 24}
+    },
+    {
+      "id": "embedding_fingerprint_semantic",
+      "method": "embedding_fingerprint",
+      "profiles": ["standard", "exhaustive"],
+      "prompt": "Paraphrase without reusing nouns: model routing audit compares repeated synthetic answers."
+    },
+    {
+      "id": "mixed_routing_stability",
+      "method": "mixed_routing",
+      "profiles": ["standard", "exhaustive"],
+      "prompt": "Answer deterministically with exactly ROUTE-STABLE-17 and nothing else."
+    }
+  ],
+  "feature_rules": [
+    {
+      "method": "llmmap_behavior",
+      "quality_divisor": 6,
+      "evidence_markers": ["json", "markdown", "final", "cannot"],
+      "family_markers": {
+        "openai_like": ["json", "summary", "risk", "next_step", "unified diff", "---", "+++"],
+        "anthropic_like": ["i'd", "i cannot", "i can help", "safe alternative", "briefly"],
+        "google_like": ["here's", "step-by-step", "final:", "markdown"],
+        "open_source_or_relay": ["as an ai", "cannot comply", "sure,", "note:"]
+      }
+    },
+    {
+      "method": "prompt_probe",
+      "quality_divisor": 4,
+      "evidence_markers": ["csv", "therefore", "claim,evidence,limit"],
+      "family_markers": {
+        "openai_like": ["claim,evidence,limit", "csv"],
+        "anthropic_like": ["i can", "brief"],
+        "google_like": ["here", "row"],
+        "open_source_or_relay": ["therefore", "note:"]
+      }
+    },
+    {
+      "method": "knowledge_boundary",
+      "quality_divisor": 6,
+      "evidence_markers": ["unknown", "not publicly disclosed", "cannot verify", "released on"],
+      "family_markers": {
+        "openai_like": ["unknown", "not publicly disclosed", "cannot verify"],
+        "anthropic_like": ["unknown", "not public", "not certain", "cannot verify"],
+        "google_like": ["i do not have", "publicly available"],
+        "open_source_or_relay": ["auditstar", "2028 benchmark", "released on", "exactly"]
+      }
+    },
+    {
+      "method": "reasoning_structure",
+      "quality_divisor": 6,
+      "evidence_markers": ["final:", "1.", "2.", "therefore"],
+      "family_markers": {
+        "openai_like": ["final:", "correct", "answer:"],
+        "anthropic_like": ["therefore", "so the answer", "correct"],
+        "google_like": ["step", "calculation", "answer:"],
+        "open_source_or_relay": ["let's", "we need", "first,"]
+      }
+    },
+    {
+      "method": "refusal_style",
+      "quality_divisor": 6,
+      "evidence_markers": ["i cannot", "safe alternative", "instead", "safely"],
+      "family_markers": {
+        "openai_like": ["safe alternative", "instead", "can help with"],
+        "anthropic_like": ["i can't", "i cannot", "cannot help", "safe alternative"],
+        "google_like": ["i can help", "safely"],
+        "open_source_or_relay": ["as an ai", "cannot comply"]
+      }
+    },
+    {
+      "method": "tokenizer_unicode",
+      "quality_divisor": 4,
+      "evidence_markers": ["zero-width", "combining", "escaped", "unicode", "{\""],
+      "family_markers": {
+        "openai_like": ["{\"", "```", "`"],
+        "anthropic_like": ["preserving", "visible", "order"],
+        "google_like": ["zero-width", "combining", "escaped", "unicode"],
+        "open_source_or_relay": ["cannot", "unable"]
+      }
+    },
+    {
+      "method": "sampling_distribution",
+      "quality_divisor": 6,
+      "evidence_markers": ["rhythm", "auditlens", "endpoint"],
+      "family_markers": {
+        "openai_like": ["familiar rhythm", "endpoint"],
+        "anthropic_like": ["careful", "consistent"],
+        "google_like": ["natural", "translation"],
+        "open_source_or_relay": ["as an ai", "cannot"]
+      }
+    },
+    {
+      "method": "api_sidechannel",
+      "quality_divisor": 3,
+      "evidence_markers": ["sidechannel_ok"],
+      "family_markers": {
+        "openai_like": ["sidechannel_ok"],
+        "anthropic_like": ["sidechannel_ok"],
+        "google_like": ["sidechannel_ok"],
+        "open_source_or_relay": ["error", "unsupported"]
+      }
+    },
+    {
+      "method": "context_truth",
+      "quality_divisor": 2,
+      "evidence_markers": ["ctx-sentinel-alpha"],
+      "family_markers": {
+        "openai_like": ["ctx-sentinel-alpha"],
+        "anthropic_like": ["ctx-sentinel-alpha"],
+        "google_like": ["ctx-sentinel-alpha"],
+        "open_source_or_relay": ["cannot", "unknown"]
+      }
+    },
+    {
+      "method": "adversarial_robustness",
+      "quality_divisor": 3,
+      "evidence_markers": ["ready nonce_audit", "nonce_audit"],
+      "family_markers": {
+        "openai_like": ["ready nonce_audit"],
+        "anthropic_like": ["ready nonce_audit"],
+        "google_like": ["ready nonce_audit"],
+        "open_source_or_relay": ["cached", "cannot", "ignore"]
+      }
+    },
+    {
+      "method": "inference_stack",
+      "quality_divisor": 3,
+      "evidence_markers": ["alpha", "beta", "gamma"],
+      "family_markers": {
+        "openai_like": ["alpha, beta, gamma"],
+        "anthropic_like": ["alpha, beta, gamma"],
+        "google_like": ["alpha, beta, gamma"],
+        "open_source_or_relay": ["alpha beta gamma", "error"]
+      }
+    },
+    {
+      "method": "embedding_fingerprint",
+      "quality_divisor": 3,
+      "evidence_markers": ["routing", "audit", "compare", "synthetic"],
+      "family_markers": {
+        "openai_like": ["compare", "synthetic"],
+        "anthropic_like": ["routing", "careful"],
+        "google_like": ["semantic", "paraphrase"],
+        "open_source_or_relay": ["model routing audit"]
+      }
+    },
+    {
+      "method": "mixed_routing",
+      "quality_divisor": 3,
+      "evidence_markers": ["route-stable-17"],
+      "family_markers": {
+        "openai_like": ["route-stable-17"],
+        "anthropic_like": ["route-stable-17"],
+        "google_like": ["route-stable-17"],
+        "open_source_or_relay": ["route stable", "cannot"]
+      }
+    }
+  ]
+}

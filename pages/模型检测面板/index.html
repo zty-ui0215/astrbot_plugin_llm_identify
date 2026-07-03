@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LLM Identify</title>
+  <link rel="stylesheet" href="./app.css?v=20260703-1" />
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">LLM IDENTIFY</p>
+        <h1>Endpoint Audit</h1>
+      </div>
+      <button id="refreshBtn" type="button">Refresh</button>
+    </header>
+
+    <section class="summary-grid">
+      <article class="metric">
+        <span>Provider</span>
+        <strong id="providerId">unknown</strong>
+      </article>
+      <article class="metric">
+        <span>Claimed Model</span>
+        <strong id="claimedModel">unknown</strong>
+      </article>
+      <article class="metric">
+        <span>Family Guess</span>
+        <strong id="modelFamily">unknown</strong>
+      </article>
+      <article class="metric">
+        <span>State</span>
+        <strong id="runningState">idle</strong>
+      </article>
+      <article class="metric">
+        <span>Risk</span>
+        <strong id="riskLevel">none</strong>
+      </article>
+    </section>
+
+    <section class="workbench">
+      <div class="workbench-head">
+        <div>
+          <h2>Run Audit</h2>
+          <p>Quick mode checks protocol behavior. Full mode adds token-accounting and fingerprint evidence.</p>
+        </div>
+        <button id="detectBtn" type="button">Run</button>
+      </div>
+      <div class="mode-panel">
+        <label>
+          <span>Audit mode</span>
+          <select id="detectMode">
+            <option value="astrbot">AstrBot Provider - Quick</option>
+            <option value="astrbot_full">AstrBot Provider - Full Fingerprint</option>
+            <option value="direct_openai">Direct OpenAI-compatible - Full Fingerprint</option>
+          </select>
+        </label>
+        <div id="directFields" class="direct-fields" hidden>
+          <label>
+            <span>Base URL</span>
+            <input id="directBaseUrl" type="url" placeholder="https://api.openai.com/v1" autocomplete="off" />
+          </label>
+          <label>
+            <span>API Key</span>
+            <input id="directApiKey" type="password" placeholder="sk-..." autocomplete="off" />
+          </label>
+          <label>
+            <span>Model</span>
+            <input id="directModel" type="text" placeholder="gpt-4.1-mini" autocomplete="off" />
+          </label>
+        </div>
+      </div>
+      <div id="message" class="message" hidden></div>
+    </section>
+
+    <section id="reportPanel" class="report-panel" hidden>
+      <div class="report-head">
+        <div>
+          <h2>Audit Result</h2>
+          <p id="reportTime"></p>
+        </div>
+        <span id="confidenceBadge" class="badge">none</span>
+      </div>
+
+      <div class="conclusion">
+        <label>Primary Findings</label>
+        <strong id="findingsSummary"></strong>
+      </div>
+
+      <div id="scoreGrid" class="score-grid"></div>
+      <div id="probabilityList" class="candidate-list"></div>
+      <div id="probeList" class="probe-list"></div>
+
+      <details class="raw-report">
+        <summary>Text report</summary>
+        <pre id="rawReport"></pre>
+      </details>
+    </section>
+  </main>
+
+  <script src="./app.js?v=20260703-1"></script>
+</body>
+</html>
+

@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "description": "User-editable inference-stack signature database for engines, quantization, hardware, and streaming/timing surfaces. Empty by default.",
+  "signatures": []
+}

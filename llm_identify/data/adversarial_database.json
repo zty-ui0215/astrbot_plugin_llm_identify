@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "description": "User-editable spoofing and adversarial-robustness baseline database. Empty by default.",
+  "spoofing_patterns": [],
+  "known_wrappers": []
+}

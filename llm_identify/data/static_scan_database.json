@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "description": "User-editable static scan signatures for SDKs, base URLs, headers, model aliases, and relay footprints. Empty by default.",
+  "signatures": []
+}

@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "description": "User-editable knowledge-boundary facts. Empty by default; add dated facts, public/non-public markers, and expected uncertainty behavior later.",
+  "facts": []
+}
