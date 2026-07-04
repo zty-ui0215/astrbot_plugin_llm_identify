@@ -1,4 +1,4 @@
-﻿{
+{
   "version": 1,
   "description": "User-editable model baseline database. Seeded with public LLMmap default supported models and external corpus references. Add model-specific behavioral, lexical, embedding, timing, and method-score baselines here.",
   "sources": [

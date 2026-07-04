@@ -33,6 +33,7 @@ class FingerprintFeatureTests(unittest.TestCase):
         self.assertTrue(results)
         self.assertIsNotNone(fused.fingerprint_confidence)
         self.assertTrue(fused.fingerprint_candidates)
+        self.assertTrue(any(item.evidence.get("candidate_type") == "public_database_model" for item in fused.fingerprint_candidates))
         self.assertLess(fused.spoofing_risk or 0, 0.8)
 
     def test_disagreement_raises_spoofing_risk(self) -> None:

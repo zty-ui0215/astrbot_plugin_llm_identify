@@ -41,6 +41,13 @@ class FingerprintCandidate:
 
 
 @dataclass
+class PosteriorReport:
+    identity: dict[str, float] = field(default_factory=dict)
+    authenticity: dict[str, float] = field(default_factory=dict)
+    security: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
 class AuditReport:
     provider_id: str
     claimed_model: str
@@ -52,6 +59,13 @@ class AuditReport:
     context_truth_score: float | None
     fingerprint_score: float | None
     fingerprint_confidence: float | None
+    prompt_injection_risk: float | None
+    drift_risk: float | None
+    identity_posterior: dict[str, float]
+    authenticity_posterior: dict[str, float]
+    security_posterior: dict[str, float]
+    branch_evidence: list[dict[str, Any]]
+    thresholds: dict[str, float]
     fingerprint_candidates: list[FingerprintCandidate]
     fingerprint_method_scores: dict[str, dict[str, float]]
     fingerprint_database_status: dict[str, Any]
@@ -61,8 +75,16 @@ class AuditReport:
     mixture_probability: float
     confidence: float
     risk_level: str
+    risk_analysis: dict[str, Any]
+    evidence_summary: dict[str, Any]
     findings: list[str]
     probe_results: list[ProbeResult]
+    evidence_sources: list[Any]
+    judge_invocations: list[Any]
+    degraded_modes: list[str]
+    execution_trace: dict[str, Any]
     trace_summary: dict[str, Any]
     created_at: int
+    corpus_metadata: list[dict[str, Any]] = field(default_factory=list)
+
 

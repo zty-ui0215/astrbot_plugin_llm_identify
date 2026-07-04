@@ -1,0 +1,320 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import urllib.request
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from .features.fingerprint import FAMILIES, MethodFingerprint
+from .utils import clamp
+
+
+EMBEDDED_CORPUS_PATH = Path(__file__).resolve().parent / "data" / "trusted_reference_corpus.json"
+
+
+@dataclass(frozen=True)
+class TrustedCorpusSource:
+    source_id: str
+    path: str | None = None
+    url: str | None = None
+    sha256: str | None = None
+    timeout_seconds: float = 20.0
+    retries: int = 1
+    required: bool = False
+
+
+@dataclass
+class CorpusLoadResult:
+    source_id: str
+    status: str
+    source_type: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+    models: list[dict[str, Any]] = field(default_factory=list)
+    method: MethodFingerprint | None = None
+    degraded_reason: str | None = None
+
+
+class TrustedCorpusLoader:
+    def __init__(self, source: TrustedCorpusSource, cache_dir: str | Path) -> None:
+        self.source = source
+        self.cache_dir = Path(cache_dir)
+
+    def load(self, *, provider_id: str, claimed_model: str) -> CorpusLoadResult:
+        try:
+            raw, status = self._load_json()
+            return self._result(raw, status=status, provider_id=provider_id, claimed_model=claimed_model)
+        except Exception as exc:
+            cached = self._load_cached_after_failure()
+            if cached is not None:
+                return self._result(cached, status="cached", provider_id=provider_id, claimed_model=claimed_model, degraded_reason=str(exc))
+            if self.source.required:
+                raise
+            return CorpusLoadResult(
+                source_id=self.source.source_id,
+                status="unavailable",
+                source_type="trusted_reference_corpus",
+                degraded_reason=str(exc),
+            )
+
+    def _load_json(self) -> tuple[dict[str, Any], str]:
+        if self.source.path:
+            payload = Path(self.source.path).expanduser().read_text(encoding="utf-8-sig")
+            self._verify_integrity(payload)
+            data = json.loads(payload)
+            return _object(data), "ok"
+        if not self.source.url:
+            raise ValueError("trusted corpus source requires path or url")
+        last_error: Exception | None = None
+        for _ in range(max(1, self.source.retries + 1)):
+            try:
+                request = urllib.request.Request(self.source.url, headers={"User-Agent": "llm-identify/1"})
+                with urllib.request.urlopen(request, timeout=self.source.timeout_seconds) as response:
+                    payload = response.read().decode("utf-8")
+                self._verify_integrity(payload)
+                data = _object(json.loads(payload))
+                self.cache_dir.mkdir(parents=True, exist_ok=True)
+                self._cache_path().write_text(json.dumps(data, ensure_ascii=True, indent=2), encoding="utf-8")
+                return data, "ok"
+            except Exception as exc:
+                last_error = exc
+        raise RuntimeError(str(last_error) if last_error else "download failed")
+
+    def _load_cached_after_failure(self) -> dict[str, Any] | None:
+        if not self.source.url:
+            return None
+        path = self._cache_path()
+        if not path.exists():
+            return None
+        try:
+            return _object(json.loads(path.read_text(encoding="utf-8-sig")))
+        except Exception:
+            return None
+
+    def _cache_path(self) -> Path:
+        key = self.source.url or self.source.path or self.source.source_id
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+        return self.cache_dir / f"trusted-corpus-{self.source.source_id}-{digest}.json"
+
+    def _verify_integrity(self, payload: str) -> None:
+        if not self.source.sha256:
+            return
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        if digest.lower() != self.source.sha256.lower():
+            raise ValueError(f"integrity check failed for trusted corpus {self.source.source_id}")
+
+    def _result(
+        self,
+        raw: dict[str, Any],
+        *,
+        status: str,
+        provider_id: str,
+        claimed_model: str,
+        degraded_reason: str | None = None,
+    ) -> CorpusLoadResult:
+        metadata = _metadata(raw, self.source.source_id, status)
+        models = _extract_corpus_models(raw, self.source.source_id)
+        method = _score_corpus(models, raw, provider_id=provider_id, claimed_model=claimed_model, source_id=self.source.source_id)
+        return CorpusLoadResult(
+            source_id=self.source.source_id,
+            status=status,
+            source_type="trusted_reference_corpus",
+            metadata=metadata,
+            models=models,
+            method=method,
+            degraded_reason=degraded_reason,
+        )
+
+
+def default_trusted_corpus_sources() -> list[TrustedCorpusSource]:
+    if EMBEDDED_CORPUS_PATH.exists():
+        return [TrustedCorpusSource(source_id="embedded_trusted_reference", path=str(EMBEDDED_CORPUS_PATH))]
+    return []
+
+
+def load_trusted_corpora(
+    *,
+    sources: list[TrustedCorpusSource],
+    cache_dir: str | Path,
+    provider_id: str,
+    claimed_model: str,
+) -> list[CorpusLoadResult]:
+    return [
+        TrustedCorpusLoader(source, cache_dir).load(provider_id=provider_id, claimed_model=claimed_model)
+        for source in sources
+    ]
+
+
+def _object(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise ValueError("trusted corpus root must be a JSON object")
+    return data
+
+
+def _metadata(raw: dict[str, Any], source_id: str, status: str) -> dict[str, Any]:
+    version = raw.get("corpus_version") or raw.get("version") or "unknown"
+    schema = raw.get("schema_version") or "unknown"
+    release = raw.get("release") or raw.get("accepted_in_release") or "embedded"
+    return {
+        "source_id": source_id,
+        "status": status,
+        "corpus_version": str(version),
+        "schema_version": str(schema),
+        "probe_pack_version": str(raw.get("probe_pack_version") or "unknown"),
+        "release": str(release),
+        "source_attribution": raw.get("source_attribution") or raw.get("sources") or [],
+        "trust_tiers": _trust_tier_counts(raw),
+        "integrity": "sha256" if raw.get("sha256") else "not_provided",
+    }
+
+
+def _trust_tier_counts(raw: dict[str, Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in _records(raw):
+        tier = str(item.get("trust_tier") or item.get("tier") or "unknown").upper()
+        counts[tier] = counts.get(tier, 0) + 1
+    return counts
+
+
+def _extract_corpus_models(raw: dict[str, Any], source_id: str) -> list[dict[str, Any]]:
+    models: list[dict[str, Any]] = []
+    for profile in raw.get("model_profiles", []) or []:
+        if not isinstance(profile, dict):
+            continue
+        model_id = str(profile.get("id") or "").strip()
+        if not model_id:
+            continue
+        family = _normalize_family(str(profile.get("provider_family_id") or profile.get("family") or ""))
+        aliases = [str(alias) for alias in profile.get("aliases", []) if alias]
+        models.append(
+            {
+                "id": model_id,
+                "family": family or "unknown",
+                "aliases": aliases,
+                "provider_cluster": profile.get("provider_cluster") or profile.get("provider_family_id") or "",
+                "trust_tier": profile.get("trust_tier") or "T2",
+                "source": source_id,
+                "corpus_source": source_id,
+                "corpus_version": raw.get("corpus_version") or raw.get("version") or "unknown",
+                "release": raw.get("release") or "embedded",
+            }
+        )
+    for record in _records(raw):
+        if not isinstance(record, dict):
+            continue
+        model_id = str(record.get("model_claim") or record.get("model_id") or record.get("id") or "").strip()
+        if not model_id:
+            continue
+        provider = str(record.get("provider") or record.get("provider_family") or "")
+        family = _normalize_family(str(record.get("family") or provider))
+        endpoint = record.get("endpoint_class") if isinstance(record.get("endpoint_class"), dict) else {}
+        models.append(
+            {
+                "id": model_id,
+                "family": family or "unknown",
+                "provider_cluster": provider.lower(),
+                "trust_tier": str(record.get("trust_tier") or "T2").upper(),
+                "source": source_id,
+                "corpus_source": source_id,
+                "corpus_version": raw.get("corpus_version") or raw.get("version") or record.get("schema_version") or "unknown",
+                "release": raw.get("release") or record.get("accepted_in_release") or "unknown",
+                "endpoint_official": endpoint.get("official_match"),
+            }
+        )
+    return models
+
+
+def _records(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    values = raw.get("accepted_references") or raw.get("references") or raw.get("records") or []
+    return [item for item in values if isinstance(item, dict)]
+
+
+def _score_corpus(
+    models: list[dict[str, Any]],
+    raw: dict[str, Any],
+    *,
+    provider_id: str,
+    claimed_model: str,
+    source_id: str,
+) -> MethodFingerprint | None:
+    scores = {family: 0.0 for family in FAMILIES}
+    matches: list[dict[str, Any]] = []
+    haystacks = [claimed_model.lower(), provider_id.lower()]
+    for model in models:
+        model_id = str(model.get("id") or "").lower()
+        aliases = [str(alias).lower() for alias in model.get("aliases", [])]
+        provider_cluster = str(model.get("provider_cluster") or "").lower()
+        tier_weight = _tier_weight(str(model.get("trust_tier") or "T2"))
+        family = str(model.get("family") or "unknown")
+        if _matches_any([model_id, *aliases], haystacks):
+            scores[family] = scores.get(family, 0.0) + 1.0 * tier_weight
+            matches.append(model)
+        elif provider_cluster and any(provider_cluster in haystack for haystack in haystacks if haystack):
+            scores[family] = scores.get(family, 0.0) + 0.40 * tier_weight
+            matches.append(model)
+    trait_matches = _score_protocol_traits(raw, haystacks)
+    for family, value in trait_matches.items():
+        scores[family] = scores.get(family, 0.0) + value
+    if not matches and not any(trait_matches.values()):
+        return None
+    total = sum(scores.values())
+    normalized = {family: round(max(0.0, scores.get(family, 0.0)) / total, 4) for family in FAMILIES}
+    quality = clamp(min(0.85, 0.30 + len(matches) * 0.12 + sum(trait_matches.values()) * 0.08))
+    return MethodFingerprint(
+        method=f"trusted_corpus:{source_id}",
+        family_scores=normalized,
+        quality=quality,
+        evidence={
+            "matched_models": [str(item.get("id")) for item in matches[:8]],
+            "matched_trust_tiers": sorted({str(item.get("trust_tier") or "unknown") for item in matches}),
+            "protocol_trait_matches": trait_matches,
+            "source": source_id,
+            "corpus_version": raw.get("corpus_version") or raw.get("version") or "unknown",
+            "records_considered": len(models),
+        },
+    )
+
+
+def _score_protocol_traits(raw: dict[str, Any], haystacks: list[str]) -> dict[str, float]:
+    scores: dict[str, float] = {}
+    for trait in raw.get("protocol_traits", []) or []:
+        if not isinstance(trait, dict):
+            continue
+        text = " ".join(str(trait.get(key) or "").lower() for key in ("surface", "field", "expected_behavior", "provider_family_id"))
+        if not any(token and token in " ".join(haystacks) for token in ("openai", "anthropic", "google", "gemini", "claude")):
+            continue
+        family = _normalize_family(str(trait.get("provider_family_id") or trait.get("family") or text)) or "unknown"
+        confidence = clamp(float(trait.get("confidence") or 0.5), 0.05, 1.0)
+        if any(word in text for word in ("openai", "anthropic", "google", "gemini", "claude")):
+            scores[family] = scores.get(family, 0.0) + confidence * 0.25
+    return scores
+
+
+def _matches_any(needles: list[str], haystacks: list[str]) -> bool:
+    for needle in needles:
+        if not needle:
+            continue
+        for haystack in haystacks:
+            if haystack and (needle in haystack or haystack in needle):
+                return True
+    return False
+
+
+def _tier_weight(tier: str) -> float:
+    return {"T0": 1.0, "T1": 0.9, "T2": 0.65, "T3": 0.35}.get(tier.upper(), 0.5)
+
+
+def _normalize_family(value: str) -> str | None:
+    lower = value.strip().lower()
+    if lower in FAMILIES:
+        return lower
+    if lower in {"openai", "openai_like", "gpt", "chatgpt"}:
+        return "openai_like"
+    if lower in {"anthropic", "anthropic_like", "claude"}:
+        return "anthropic_like"
+    if lower in {"google", "google_like", "gemini", "gemma"}:
+        return "google_like"
+    if lower in {"open_source", "open-source", "open_source_or_relay", "relay", "proxy", "llama", "qwen", "mistral"}:
+        return "open_source_or_relay"
+    return None

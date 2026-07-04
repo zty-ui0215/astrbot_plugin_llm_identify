@@ -27,10 +27,14 @@ class FingerprintRuleTests(unittest.TestCase):
         }
         self.assertTrue(expected.issubset(methods))
 
-    def test_empty_databases_are_loadable(self) -> None:
+    def test_public_fingerprint_database_is_loadable(self) -> None:
         rules = load_rules()
         self.assertIn("fingerprint", rules.databases)
-        self.assertEqual(rules.databases["fingerprint"]["models"], [])
+        models = rules.databases["fingerprint"]["models"]
+        sources = {item.get("id") for item in rules.databases["fingerprint"].get("sources", [])}
+        self.assertGreaterEqual(len(models), 50)
+        self.assertIn("llmmap_default_supported_models", sources)
+        self.assertIn("lmsys_chat_1m", sources)
         self.assertEqual(rules.databases["embedding"]["vectors"], [])
         self.assertEqual(rules.databases["knowledge_boundary"]["facts"], [])
 

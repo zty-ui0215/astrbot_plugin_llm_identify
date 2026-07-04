@@ -35,6 +35,10 @@ async def fake_generate(prompt: str, **kwargs):
     )
 
 
+async def fake_auxiliary_judge(prompt: str) -> str:
+    return '{"family":"openai_like","confidence":0.82,"rationale":"feature summaries match OpenAI-like behavior"}'
+
+
 class EngineModeTests(unittest.IsolatedAsyncioTestCase):
     async def test_quick_mode_skips_token_audit(self) -> None:
         adapter = GenerateAdapter("fake", "provider-a", "gpt-test", fake_generate, TraceStore())
@@ -58,6 +62,22 @@ class EngineModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(report.fingerprint_confidence)
         self.assertIn("fingerprint", {item.category for item in report.probe_results})
         self.assertTrue(report.fingerprint_candidates)
+        self.assertGreaterEqual(report.fingerprint_database_status.get("fingerprint_models", 0), 50)
+
+    async def test_auxiliary_llm_judge_contributes_method(self) -> None:
+        adapter = GenerateAdapter("fake", "provider-a", "gpt-test", fake_generate, TraceStore())
+        report = await AuditEngine(
+            adapter,
+            AuditOptions(
+                enable_protocol_probe=False,
+                enable_fingerprint_probe=True,
+                fingerprint_repeats=1,
+                enable_auxiliary_llm_judge=True,
+                auxiliary_judge_fn=fake_auxiliary_judge,
+            ),
+        ).run()
+        self.assertIn("auxiliary_llm_judge", report.fingerprint_method_scores)
+        self.assertTrue(any(item.name == "auxiliary_llm_judge" for item in report.probe_results))
 
 
 if __name__ == "__main__":

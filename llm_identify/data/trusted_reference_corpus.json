@@ -1,0 +1,123 @@
+{
+  "schema_version": "1.0.0",
+  "corpus_version": "2026-07-embedded",
+  "probe_pack_version": "pack-core-v1",
+  "release": "embedded-2026-07",
+  "source_attribution": [
+    {
+      "id": "provider_public_docs",
+      "kind": "public_documentation",
+      "notes": "Compact stable provider-family traits and high-value model family aliases only."
+    },
+    {
+      "id": "llm_identify_seed",
+      "kind": "local_embedded_corpus",
+      "notes": "Embedded corpus is intentionally small; extended and frequently updated corpora should be loaded from external URLs."
+    }
+  ],
+  "provider_families": [
+    {"id": "openai_like", "name": "OpenAI-like", "aliases": ["openai", "gpt", "chatgpt"]},
+    {"id": "anthropic_like", "name": "Anthropic-like", "aliases": ["anthropic", "claude"]},
+    {"id": "google_like", "name": "Google/Gemini-like", "aliases": ["google", "gemini", "gemma"]},
+    {"id": "open_source_or_relay", "name": "Open-source or relay-shaped", "aliases": ["llama", "qwen", "mistral", "relay", "proxy"]}
+  ],
+  "model_profiles": [
+    {
+      "id": "openai.gpt_family",
+      "provider_family_id": "openai_like",
+      "aliases": ["gpt-4o", "gpt-4.1", "gpt-5", "o3", "o4", "chatgpt"],
+      "trust_tier": "T2",
+      "known_surface_traits": [
+        {"kind": "header", "detail": "x-request-id and rate-limit headers are commonly observable on first-party APIs", "confidence": 0.8}
+      ]
+    },
+    {
+      "id": "anthropic.claude_family",
+      "provider_family_id": "anthropic_like",
+      "aliases": ["claude", "claude-sonnet", "claude-opus", "claude-haiku"],
+      "trust_tier": "T2",
+      "known_surface_traits": [
+        {"kind": "openai_compat", "detail": "OpenAI-compatible surface can hoist system/developer messages and leave system_fingerprint empty", "confidence": 0.9}
+      ]
+    },
+    {
+      "id": "google.gemini_family",
+      "provider_family_id": "google_like",
+      "aliases": ["gemini", "gemini-flash", "gemini-pro", "gemma"],
+      "trust_tier": "T2",
+      "known_surface_traits": [
+        {"kind": "openai_compat", "detail": "Gemini can expose an OpenAI-compatible path family while retaining Google/Gemini usage and event traits", "confidence": 0.85}
+      ]
+    },
+    {
+      "id": "relay.open_source_family",
+      "provider_family_id": "open_source_or_relay",
+      "aliases": ["llama", "qwen", "mistral", "mixtral", "deepseek", "relay", "proxy"],
+      "trust_tier": "T2",
+      "known_surface_traits": [
+        {"kind": "gateway", "detail": "Proxy or relay endpoints may rewrite usage, flatten headers, or route across heterogeneous backends", "confidence": 0.75}
+      ]
+    }
+  ],
+  "protocol_traits": [
+    {
+      "id": "openai.request_id_headers",
+      "provider_family_id": "openai_like",
+      "surface": "openai_compatible",
+      "field": "x-request-id",
+      "expected_behavior": "first-party OpenAI APIs commonly expose request IDs and rate-limit headers",
+      "confidence": 0.8
+    },
+    {
+      "id": "anthropic.compat_system_fingerprint",
+      "provider_family_id": "anthropic_like",
+      "surface": "openai_compat",
+      "field": "system_fingerprint",
+      "expected_behavior": "Anthropic OpenAI-compatible layer can return an empty system_fingerprint",
+      "confidence": 0.9
+    },
+    {
+      "id": "google.openai_compat_path",
+      "provider_family_id": "google_like",
+      "surface": "openai_compat",
+      "field": "base_url",
+      "expected_behavior": "Gemini can be reached through an OpenAI-compatible path family under generativelanguage.googleapis.com",
+      "confidence": 0.85
+    }
+  ],
+  "accepted_references": [
+    {
+      "record_id": "trc_openai_gpt_family_seed",
+      "schema_version": "1.0.0",
+      "provider": "openai",
+      "trust_tier": "T2",
+      "endpoint_class": {"host": "api.openai.com", "path_family": "/v1", "official_match": true},
+      "model_claim": "gpt-family",
+      "probe_pack_version": "pack-core-v1",
+      "sanitizer_version": "1.0.0",
+      "accepted_in_release": "embedded-2026-07"
+    },
+    {
+      "record_id": "trc_anthropic_claude_seed",
+      "schema_version": "1.0.0",
+      "provider": "anthropic",
+      "trust_tier": "T2",
+      "endpoint_class": {"host": "api.anthropic.com", "path_family": "/v1", "official_match": true},
+      "model_claim": "claude-family",
+      "probe_pack_version": "pack-core-v1",
+      "sanitizer_version": "1.0.0",
+      "accepted_in_release": "embedded-2026-07"
+    },
+    {
+      "record_id": "trc_google_gemini_seed",
+      "schema_version": "1.0.0",
+      "provider": "google",
+      "trust_tier": "T2",
+      "endpoint_class": {"host": "generativelanguage.googleapis.com", "path_family": "/v1beta/openai", "official_match": true},
+      "model_claim": "gemini-family",
+      "probe_pack_version": "pack-core-v1",
+      "sanitizer_version": "1.0.0",
+      "accepted_in_release": "embedded-2026-07"
+    }
+  ]
+}

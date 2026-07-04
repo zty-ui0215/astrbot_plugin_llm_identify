@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ..adapters.base import GenerateAdapter
+from ..i18n import t
 from ..models import ProbeResult
 from ..utils import status_for_score, try_parse_json_object
 
@@ -8,7 +9,7 @@ from ..utils import status_for_score, try_parse_json_object
 class ProtocolProbePack:
     category = "protocol"
 
-    async def run(self, adapter: GenerateAdapter) -> list[ProbeResult]:
+    async def run(self, adapter: GenerateAdapter, language: str | None = None) -> list[ProbeResult]:
         results: list[ProbeResult] = []
         marker_a = await adapter.generate(
             "Reply with exactly this marker and nothing else: LLMID_PROTOCOL_A",
@@ -29,7 +30,7 @@ class ProtocolProbePack:
                 name="minimal_completion_contract",
                 score=exact_score,
                 status=status_for_score(exact_score),
-                detail="The endpoint followed independent exact-output probes." if exact_score >= 0.8 else "The endpoint failed or wrapped at least one exact-output probe.",
+                detail=t("protocol.minimal_completion_contract.ok", language) if exact_score >= 0.8 else t("protocol.minimal_completion_contract.bad", language),
                 sample=f"A={marker_a.text.strip()!r}; B={marker_b.text.strip()!r}",
                 evidence={
                     "first_raw_type": marker_a.raw_type,
@@ -55,7 +56,7 @@ class ProtocolProbePack:
                 name="json_contract",
                 score=json_score,
                 status=status_for_score(json_score),
-                detail="The endpoint returned strict parseable JSON." if json_score >= 0.8 else "The endpoint wrapped, malformed, or changed the requested JSON payload.",
+                detail=t("protocol.json_contract.ok", language) if json_score >= 0.8 else t("protocol.json_contract.bad", language),
                 sample=json_reply.text,
                 evidence={"parsed": parsed, "strict_object": strict, "raw_type": json_reply.raw_type},
             )
@@ -69,7 +70,7 @@ class ProtocolProbePack:
                 name="usage_surface",
                 score=usage_score,
                 status=status_for_score(usage_score),
-                detail="At least one protocol probe exposed token usage metadata." if usage_present else "Protocol probes did not expose usage metadata through the current adapter.",
+                detail=t("protocol.usage_surface.ok", language) if usage_present else t("protocol.usage_surface.bad", language),
                 evidence={
                     "marker_a_usage": marker_a.usage is not None,
                     "marker_b_usage": marker_b.usage is not None,

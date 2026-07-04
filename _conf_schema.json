@@ -6,9 +6,9 @@
     "default": 60
   },
   "page_provider_id": {
-    "description": "Provider ID used by the web panel. Leave empty to use the current/default provider when AstrBot exposes one.",
+    "description": "Provider ID used by the web panel. ",
     "type": "string",
-    "hint": "Example: openai-default",
+    "hint": "Example: openai-default.Leave empty to use the current/default provider when AstrBot exposes one.",
     "default": ""
   },
   "enable_protocol_probe": {
@@ -17,36 +17,39 @@
     "default": true
   },
   "enable_token_probe": {
-    "description": "Enable token-accounting probes by default. Full audits always enable token probes even when this is false.",
+    "description": "Enable token-accounting probes by default. ",
     "type": "bool",
+    "hint": "Full audits always enable token probes even when this is false.",
     "default": false
   },
   "enable_fingerprint_probe": {
-    "description": "Enable LLM fingerprint probes by default. Full audits always enable fingerprint probes even when this is false.",
+    "description": "Enable LLM fingerprint probes by default.",
     "type": "bool",
+    "hint": "Full audits always enable fingerprint probes even when this is false.",
     "default": false
   },
   "fingerprint_profile": {
-    "description": "Fingerprint probe breadth: light, standard, or exhaustive.",
+    "description": "Fingerprint probe breadth.",
     "type": "string",
     "hint": "light | standard | exhaustive",
     "default": "standard"
   },
   "fingerprint_repeats": {
-    "description": "Repeat count for each fingerprint probe. Higher values improve mixed-route detection but cost more requests.",
+    "description": "Repeat count for each fingerprint probe.",
     "type": "int",
-    "hint": "Recommended: 1-5",
+    "hint": "Recommended: 1-5. Higher values improve mixed-route detection but cost more requests.",
     "default": 3
   },
   "enable_auxiliary_llm_judge": {
-    "description": "Reserved for optional auxiliary-LLM judging. Deterministic scoring remains authoritative.",
+    "description": "Reserved for optional auxiliary-LLM judging. ",
     "type": "bool",
+    "hint":"Deterministic scoring remains authoritative. Auxiliary LLMs are only used for deep fingerprint matching when available.",
     "default": false
   },
   "auxiliary_judge_provider_id": {
-    "description": "Optional AstrBot provider ID used as the auxiliary LLM judge for deep fingerprint matching. Leave empty to use the page/current provider when available.",
+    "description": "Optional AstrBot provider ID used as the auxiliary LLM judge for deep fingerprint matching. ",
     "type": "string",
-    "hint": "Example: openai-judge-provider",
+    "hint": "Example: openai-judge-provider.Leave empty to use the page/current provider when available.",
     "default": ""
   },
   "enable_context_probe": {

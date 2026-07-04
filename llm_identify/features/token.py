@@ -5,6 +5,7 @@ from statistics import median
 from typing import Any
 
 from ..capture import Trace
+from ..i18n import t
 from ..models import ProbeResult
 from ..utils import clamp, status_for_score
 
@@ -23,7 +24,7 @@ class TokenAuditFeatures:
     evidence: dict[str, Any] = field(default_factory=dict)
 
 
-def analyze_token_traces(traces: list[Trace]) -> tuple[TokenAuditFeatures, list[ProbeResult]]:
+def analyze_token_traces(traces: list[Trace], language: str | None = None) -> tuple[TokenAuditFeatures, list[ProbeResult]]:
     token_traces = [trace for trace in traces if trace.category == "token"]
     by_id = {trace.probe_id: trace for trace in token_traces}
     usage_inputs = {
@@ -102,7 +103,7 @@ def analyze_token_traces(traces: list[Trace]) -> tuple[TokenAuditFeatures, list[
         anomaly_flags=anomaly_flags,
         evidence=evidence,
     )
-    return features, _feature_results(features)
+    return features, _feature_results(features, language)
 
 
 def _slope_consistency(ordered_pairs: list[tuple[str, int | None, int | None]]) -> tuple[bool, dict[str, Any]]:
@@ -161,17 +162,17 @@ def _output_length_consistency(by_id: dict[str, Trace], usage_outputs: dict[str,
     return (not text_growth) or token_growth
 
 
-def _feature_results(features: TokenAuditFeatures) -> list[ProbeResult]:
+def _feature_results(features: TokenAuditFeatures, language: str | None = None) -> list[ProbeResult]:
     checks = [
-        ("usage_availability", features.usage_available, "Usage metadata is available on most token probes.", "Usage metadata is missing on most token probes."),
-        ("input_monotonicity", features.input_token_monotonic, "Reported input tokens increase with controlled prompt length.", "Reported input tokens do not increase with controlled prompt length."),
-        ("slope_plausibility", features.slope_consistency, "Reported input token slope broadly tracks local estimates.", "Reported input token slope is implausible relative to local estimates."),
-        ("constant_count_anomaly", not features.constant_count_detected, "Reported input token counts vary across varied prompts.", "Reported input token counts are constant or nearly constant."),
-        ("unicode_count_stability", features.unicode_count_stability, "Unicode edge prompts produce plausible token counts.", "Unicode edge prompts produce missing or implausible token counts."),
-        ("output_length_consistency", features.output_length_consistency, "Output token counts track short versus long responses when exposed.", "Output token counts do not track short versus long responses."),
+        ("usage_availability", features.usage_available),
+        ("input_monotonicity", features.input_token_monotonic),
+        ("slope_plausibility", features.slope_consistency),
+        ("constant_count_anomaly", not features.constant_count_detected),
+        ("unicode_count_stability", features.unicode_count_stability),
+        ("output_length_consistency", features.output_length_consistency),
     ]
     results: list[ProbeResult] = []
-    for name, passed, ok_detail, bad_detail in checks:
+    for name, passed in checks:
         score = 1.0 if passed else 0.25
         results.append(
             ProbeResult(
@@ -179,7 +180,7 @@ def _feature_results(features: TokenAuditFeatures) -> list[ProbeResult]:
                 name=name,
                 score=score,
                 status=status_for_score(score),
-                detail=ok_detail if passed else bad_detail,
+                detail=t(f"token.{name}.ok" if passed else f"token.{name}.bad", language),
                 evidence=features.evidence if name in {"slope_plausibility", "usage_availability"} else {},
             )
         )
@@ -190,12 +191,9 @@ def _feature_results(features: TokenAuditFeatures) -> list[ProbeResult]:
             name="cache_signal_consistency",
             score=cache_score,
             status=status_for_score(cache_score),
-            detail=(
-                "Cache metadata was not exposed; repeated-prefix counts are treated as neutral."
-                if features.cache_signal_consistency is None
-                else "Repeated-prefix cache/token signal is plausible."
-                if features.cache_signal_consistency
-                else "Repeated-prefix cache/token signal is inconsistent."
+            detail=t(
+                "token.cache_signal_consistency.neutral" if features.cache_signal_consistency is None else "token.cache_signal_consistency.ok" if features.cache_signal_consistency else "token.cache_signal_consistency.bad",
+                language,
             ),
         )
     )
@@ -205,7 +203,7 @@ def _feature_results(features: TokenAuditFeatures) -> list[ProbeResult]:
             name="token_truth_score",
             score=features.token_truth_score,
             status=status_for_score(features.token_truth_score),
-            detail="Token audit score synthesized from usage availability, monotonicity, slope, cache, Unicode, and output-length evidence.",
+            detail=t("token.token_truth_score.detail", language),
             evidence={
                 "token_truth_score": features.token_truth_score,
                 "anomaly_flags": features.anomaly_flags,

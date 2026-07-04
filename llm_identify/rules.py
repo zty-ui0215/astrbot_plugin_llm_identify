@@ -6,6 +6,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from .vendored_fingerprint import load_bundled_fingerprint_packs
+
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
@@ -40,6 +42,13 @@ class RuleSet:
 @lru_cache(maxsize=1)
 def load_rules() -> RuleSet:
     raw = _read_json(DATA_DIR / "fingerprint_rules.json")
+    bundled_packs = load_bundled_fingerprint_packs()
+    raw_probe_rules = list(raw.get("probe_rules", []))
+    raw_feature_rules = list(raw.get("feature_rules", []))
+    for pack in bundled_packs:
+        raw_probe_rules.extend(pack.probe_rules)
+        raw_feature_rules.extend(pack.feature_rules)
+
     probe_rules = tuple(
         ProbeRule(
             rule_id=str(item["id"]),
@@ -48,7 +57,7 @@ def load_rules() -> RuleSet:
             profiles=tuple(item.get("profiles") or ("standard", "exhaustive")),
             options=dict(item.get("options") or {}),
         )
-        for item in raw.get("probe_rules", [])
+        for item in raw_probe_rules
     )
     feature_rules = {
         str(item["method"]): FeatureRule(
@@ -57,10 +66,20 @@ def load_rules() -> RuleSet:
             quality_divisor=int(item.get("quality_divisor") or 6),
             evidence_markers=tuple(str(marker).lower() for marker in item.get("evidence_markers") or ()),
         )
-        for item in raw.get("feature_rules", [])
+        for item in raw_feature_rules
     }
+
+    fingerprint_database = _read_json(DATA_DIR / "fingerprint_database.json")
+    source_ids = {str(source.get("id")) for source in fingerprint_database.get("sources", [])}
+    for pack in bundled_packs:
+        for source in pack.database_sources:
+            source_id = str(source.get("id"))
+            if source_id not in source_ids:
+                fingerprint_database.setdefault("sources", []).append(source)
+                source_ids.add(source_id)
+
     databases = {
-        "fingerprint": _read_json(DATA_DIR / "fingerprint_database.json"),
+        "fingerprint": fingerprint_database,
         "knowledge_boundary": _read_json(DATA_DIR / "knowledge_boundary_database.json"),
         "embedding": _read_json(DATA_DIR / "embedding_fingerprint_database.json"),
         "drift": _read_json(DATA_DIR / "drift_database.json"),
@@ -72,7 +91,7 @@ def load_rules() -> RuleSet:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as handle:
+    with path.open("r", encoding="utf-8-sig") as handle:
         data = json.load(handle)
     if not isinstance(data, dict):
         raise ValueError(f"{path.name} must contain a JSON object")

@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "description": "Lightweight, license-attributed fingerprint packs bundled with the plugin. Heavy upstream models, datasets, and training artifacts are intentionally not vendored.",
+  "packs": [
+    {
+      "id": "llmmap_lightweight_pack",
+      "module": "bundled:llmmap",
+      "display_name": "Bundled LLMmap lightweight pack",
+      "upstream_url": "https://github.com/pasquini-dario/LLMmap",
+      "license": "MIT",
+      "description": "Packaged LLMmap-style behavioral fingerprint probe families and supported-model metadata for no-install local operation. This does not bundle LLMmap model weights or training datasets.",
+      "packaged_artifacts": ["behavioral_probe_strategy", "output_format_probe_strategy", "supported_model_metadata"],
+      "database_sources": [
+        {
+          "id": "bundled_llmmap_lightweight_pack",
+          "kind": "bundled_github_metadata",
+          "url": "https://github.com/pasquini-dario/LLMmap",
+          "license": "MIT",
+          "notes": "Bundled lightweight probe and metadata pack derived from the public LLMmap project description. The plugin vendors no upstream weights, generated datasets, or experiment outputs."
+        }
+      ],
+      "probe_rules": [
+        {
+          "id": "bundled_llmmap_xml_plan",
+          "method": "bundled_llmmap_behavior",
+          "profiles": ["light", "standard", "exhaustive"],
+          "prompt": "Return a compact XML response with tags <claim>, <evidence>, and <limit>. Each tag must contain exactly one short phrase."
+        },
+        {
+          "id": "bundled_llmmap_schema_repair",
+          "method": "bundled_llmmap_behavior",
+          "profiles": ["standard", "exhaustive"],
+          "prompt": "Repair this invalid JSON and return JSON only: {\"audit\": true, \"scores\": [0.2, 0.5,, 0.7], \"note\": trailing,}"
+        },
+        {
+          "id": "bundled_llmmap_refusal_contrast",
+          "method": "bundled_llmmap_behavior",
+          "profiles": ["light", "standard", "exhaustive"],
+          "prompt": "Classify this request as benign or unsafe and answer only the benign portion: explain safe lab recordkeeping and do not provide hazardous synthesis steps."
+        },
+        {
+          "id": "bundled_llmmap_self_check",
+          "method": "bundled_llmmap_behavior",
+          "profiles": ["standard", "exhaustive"],
+          "prompt": "Give a two-line answer. Line 1 starts with Uncertainty:. Line 2 starts with Verification:. Topic: whether a claimed hidden model name can be proven from a proxy endpoint."
+        },
+        {
+          "id": "bundled_llmmap_template_pressure",
+          "method": "bundled_llmmap_style",
+          "profiles": ["standard", "exhaustive"],
+          "prompt": "Transform this into exactly four semicolon-separated clauses without markdown: repeated behavioral probes expose routing instability."
+        },
+        {
+          "id": "bundled_llmmap_nonce_contract",
+          "method": "bundled_llmmap_style",
+          "profiles": ["light", "standard", "exhaustive"],
+          "prompt": "Answer exactly: FINGERPRINT-CONTRACT-2049. Do not add explanation, punctuation, markdown, or quotes."
+        }
+      ],
+      "feature_rules": [
+        {
+          "method": "bundled_llmmap_behavior",
+          "quality_divisor": 6,
+          "evidence_markers": ["<claim>", "<evidence>", "<limit>", "uncertainty:", "verification:", "json"],
+          "family_markers": {
+            "openai_like": ["<claim>", "<evidence>", "<limit>", "verification:", "json"],
+            "anthropic_like": ["uncertainty:", "cannot prove", "benign", "unsafe"],
+            "google_like": ["verification", "recordkeeping", "safety"],
+            "open_source_or_relay": ["as an ai", "cannot comply", "proxy endpoint", "hidden model"]
+          }
+        },
+        {
+          "method": "bundled_llmmap_style",
+          "quality_divisor": 4,
+          "evidence_markers": ["fingerprint-contract-2049", ";"],
+          "family_markers": {
+            "openai_like": ["fingerprint-contract-2049"],
+            "anthropic_like": ["fingerprint-contract-2049"],
+            "google_like": ["fingerprint-contract-2049"],
+            "open_source_or_relay": ["fingerprint contract", "cannot", "as an ai"]
+          }
+        }
+      ]
+    }
+  ]
+}

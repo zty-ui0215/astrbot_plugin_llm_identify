@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..features.fingerprint import FAMILIES, FingerprintFeatureBundle, MethodFingerprint
+from ..i18n import t
 from ..models import FingerprintCandidate
 from ..utils import clamp
 
@@ -20,7 +21,7 @@ class FingerprintFusionResult:
     database_status: dict[str, Any]
 
 
-def fuse_fingerprint_features(bundle: FingerprintFeatureBundle | None) -> FingerprintFusionResult:
+def fuse_fingerprint_features(bundle: FingerprintFeatureBundle | None, language: str | None = None) -> FingerprintFusionResult:
     if bundle is None or not bundle.methods:
         return FingerprintFusionResult(None, None, [], {}, None, None, [], {})
 
@@ -49,22 +50,27 @@ def fuse_fingerprint_features(bundle: FingerprintFeatureBundle | None) -> Finger
     confidence = round(clamp(confidence), 4)
     spoofing_risk = round(clamp(disagreement * 0.95 + (0.25 if not cross_validated else 0.0) + (0.15 if top_score > 0.72 and disagreement > 0.45 else 0.0)), 4)
 
-    candidates = _family_candidates(sorted_families, winners, bundle.methods)
+    candidates = _family_candidates(sorted_families, winners, bundle.methods, language)
     candidates.extend(_database_model_candidates(bundle.database_models, candidates))
     candidates.sort(key=lambda item: item.confidence, reverse=True)
     candidates = candidates[:12]
 
     findings: list[str] = []
     if cross_validated:
-        findings.append(f"Fingerprint methods cross-validate around {top_family}.")
+        findings.append(t("fingerprint.cross_validate.ok", language, family=top_family))
     else:
-        findings.append("Fingerprint methods do not cross-validate strongly enough for a high-confidence identity claim.")
+        findings.append(t("fingerprint.cross_validate.bad", language))
     if spoofing_risk >= 0.55:
-        findings.append("Fingerprint disagreement suggests possible wrapping, mixed routing, or spoofing.")
+        findings.append(t("fingerprint.disagreement.bad", language))
     if bundle.database_models:
-        findings.append(f"Public fingerprint baseline database contributed {len(bundle.database_models)} model candidates.")
+        corpus_count = sum(1 for item in bundle.database_models if item.get("corpus_source"))
+        public_count = len(bundle.database_models) - corpus_count
+        if corpus_count:
+            findings.append(t("fingerprint.trusted_corpus.ok", language, count=corpus_count))
+        if public_count:
+            findings.append(t("fingerprint.public_database.ok", language, count=public_count))
     if any(value == 0 for value in bundle.database_status.values()):
-        findings.append("One or more optional fingerprint databases are empty; rule-only scoring was used for those methods.")
+        findings.append(t("fingerprint.empty_database.bad", language))
 
     return FingerprintFusionResult(
         fingerprint_score=round(clamp(top_score), 4),
@@ -78,10 +84,10 @@ def fuse_fingerprint_features(bundle: FingerprintFeatureBundle | None) -> Finger
     )
 
 
-def _family_candidates(sorted_families: list[tuple[str, float]], winners: list[str], methods: list[MethodFingerprint]) -> list[FingerprintCandidate]:
+def _family_candidates(sorted_families: list[tuple[str, float]], winners: list[str], methods: list[MethodFingerprint], language: str | None = None) -> list[FingerprintCandidate]:
     return [
         FingerprintCandidate(
-            name=_candidate_name(family),
+            name=_candidate_name(family, language),
             family=family,
             confidence=round(clamp(score * 0.70 + (winners.count(family) / max(1, len(winners))) * 0.30), 4),
             methods=[method.method for method in methods if _winner(method) == family],
@@ -114,8 +120,11 @@ def _database_model_candidates(database_models: list[dict[str, Any]], family_can
                 confidence=confidence,
                 methods=family_candidate.methods,
                 evidence={
-                    "candidate_type": "public_database_model",
+                    "candidate_type": "trusted_reference_model" if model.get("corpus_source") else "public_database_model",
                     "source": model.get("source", "fingerprint_database"),
+                    "corpus_source": model.get("corpus_source"),
+                    "corpus_version": model.get("corpus_version"),
+                    "trust_tier": model.get("trust_tier"),
                     "provider_cluster": model.get("provider_cluster", "unknown"),
                     "family_cluster_confidence": family_candidate.confidence,
                 },
@@ -128,11 +137,6 @@ def _winner(method: MethodFingerprint) -> str:
     return max(method.family_scores.items(), key=lambda item: item[1])[0]
 
 
-def _candidate_name(family: str) -> str:
-    return {
-        "openai_like": "OpenAI-like behavior cluster",
-        "anthropic_like": "Anthropic-like behavior cluster",
-        "google_like": "Google/Gemini-like behavior cluster",
-        "open_source_or_relay": "Open-source or relay-shaped cluster",
-        "unknown": "Unknown behavior cluster",
-    }.get(family, family)
+def _candidate_name(family: str, language: str | None = None) -> str:
+    return t(f"fingerprint.{family}", language) if family in {"openai_like", "anthropic_like", "google_like", "open_source_or_relay", "unknown"} else family
+
