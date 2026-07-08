@@ -1,0 +1,50 @@
+{
+  "metadata": {
+    "display_name": "LLM Identify",
+    "short_desc": "Probabilistic LLM endpoint audit.",
+    "desc": "Audits AstrBot providers and OpenAI-compatible endpoints with protocol, token, fingerprint, and evidence scoring."
+  },
+  "config": {
+    "default_timeout": {"description": "Probe timeout", "hint": "Timeout in seconds for each probe request. Recommended: 30-120."},
+    "page_provider_id": {"description": "Page provider ID", "hint": "Provider ID used by the web panel. Example: openai-default. Leave empty to use the current/default provider when AstrBot exposes one."},
+    "enable_protocol_probe": {"description": "Protocol probes", "hint": "Enable protocol behavior probes."},
+    "enable_token_probe": {"description": "Token probes", "hint": "Enable token-accounting probes by default. Full audits always enable token probes even when this is false."},
+    "enable_fingerprint_probe": {"description": "Fingerprint probes", "hint": "Enable LLM fingerprint probes by default. Full audits always enable fingerprint probes even when this is false."},
+    "fingerprint_profile": {"description": "Fingerprint breadth", "hint": "light | standard | exhaustive"},
+    "fingerprint_repeats": {"description": "Probe repeats", "hint": "Repeat count for each fingerprint probe. Recommended: 1-5. Higher values improve mixed-route detection but cost more requests."},
+    "enable_auxiliary_llm_judge": {"description": "Auxiliary judge", "hint": "Reserved for optional auxiliary-LLM judging. Deterministic scoring remains authoritative."},
+    "auxiliary_judge_provider_id": {"description": "Judge provider ID", "hint": "Optional AstrBot provider ID used as the auxiliary LLM judge. Example: openai-judge-provider. Leave empty to use the page/current provider when available."},
+    "enable_context_probe": {"description": "Context probes", "hint": "Reserved for future context-window sentinel probes. Currently disabled."},
+    "strict_mode": {"description": "Strict mode", "hint": "Apply a more conservative confidence penalty for failed probes."}
+  },
+  "pages": {
+    "模型检测面板": {
+      "title": "Model Audit Panel",
+      "description": "Run endpoint audits and inspect evidence.",
+      "eyebrow": "LLM IDENTIFY",
+      "heading": "Endpoint Audit",
+      "language": "Language",
+      "refresh": "Refresh",
+      "provider": "Provider",
+      "claimed_model": "Claimed Model",
+      "family_guess": "Family Guess",
+      "state": "State",
+      "risk": "Risk",
+      "run_audit": "Run Audit",
+      "run_hint": "Quick mode checks protocol behavior. Full mode adds token-accounting and fingerprint evidence.",
+      "run": "Run",
+      "audit_mode": "Audit mode",
+      "mode_astrbot": "AstrBot Provider - Quick",
+      "mode_astrbot_full": "AstrBot Provider - Full Fingerprint",
+      "mode_direct": "Direct OpenAI-compatible - Full Fingerprint",
+      "astrbot_provider": "AstrBot model",
+      "no_models": "No AstrBot models available",
+      "base_url": "Base URL",
+      "api_key": "API Key",
+      "model": "Model",
+      "audit_result": "Audit Result",
+      "primary_findings": "Primary Findings",
+      "text_report": "Text report"
+    }
+  }
+}

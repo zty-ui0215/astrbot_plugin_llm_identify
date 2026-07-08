@@ -4,11 +4,13 @@ import csv
 from pathlib import Path
 from typing import Iterable
 
+from .benchmark import default_regression_cases, evaluate_benchmark, write_benchmark_artifacts
+
 
 def write_curve_csv(rows: Iterable[dict[str, float]], output: str | Path) -> Path:
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["threshold", "fpr", "tpr", "precision", "recall", "fnr"]
+    fieldnames = ["threshold", "accepted", "coverage", "accuracy", "error_rate"]
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
@@ -18,21 +20,13 @@ def write_curve_csv(rows: Iterable[dict[str, float]], output: str | Path) -> Pat
 
 
 def default_curve_rows() -> list[dict[str, float]]:
-    rows: list[dict[str, float]] = []
-    for index in range(1, 10):
-        threshold = index / 10
-        fpr = max(0.01, (1.0 - threshold) ** 2 * 0.75)
-        fnr = min(0.95, threshold ** 2 * 0.8)
-        tpr = 1.0 - fnr
-        precision = 1.0 - fpr * 0.55
-        rows.append({"threshold": threshold, "fpr": fpr, "tpr": tpr, "precision": precision, "recall": tpr, "fnr": fnr})
-    return rows
+    return evaluate_benchmark(default_regression_cases()).threshold_curve
 
 
 def write_curve_placeholders(output_dir: str | Path) -> list[Path]:
-    out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    csv_path = write_curve_csv(default_curve_rows(), out / "metrics.csv")
-    manifest = out / "figures_manifest.json"
-    manifest.write_text('{"metrics":"metrics.csv","figures":["roc.png","pr.png","threshold.png"],"status":"csv_ready"}\n', encoding="utf-8")
-    return [csv_path, manifest]
+    """Write offline benchmark artifacts for CLI compatibility.
+
+    The historical function name is retained because the CLI and older callers use it,
+    but the output is now a real regression metric bundle rather than synthetic curves.
+    """
+    return write_benchmark_artifacts(default_regression_cases(), output_dir)

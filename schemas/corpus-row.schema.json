@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "corpus-row.schema.json",
+  "title": "LLM Identify accepted trusted reference corpus row",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "record_id",
+    "schema_version",
+    "provider",
+    "trust_tier",
+    "endpoint_class",
+    "model_claim",
+    "probe_pack_version",
+    "sanitizer_version",
+    "accepted_in_release"
+  ],
+  "properties": {
+    "record_id": {"type": "string", "minLength": 8},
+    "schema_version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+"},
+    "provider": {"type": "string", "enum": ["openai", "anthropic", "google"]},
+    "trust_tier": {"type": "string", "enum": ["T0", "T1", "T2", "T3"]},
+    "endpoint_class": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["host", "path_family", "official_match"],
+      "properties": {
+        "host": {"type": "string", "minLength": 3},
+        "path_family": {"type": "string", "minLength": 1},
+        "official_match": {"type": "boolean"}
+      }
+    },
+    "model_claim": {"type": "string", "minLength": 1},
+    "probe_pack_version": {"type": "string", "minLength": 1},
+    "sanitizer_version": {"type": "string", "minLength": 1},
+    "accepted_in_release": {"type": "string", "minLength": 1},
+    "automated_checks": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "schema_valid": {"type": "boolean"},
+        "forbidden_fields_found": {"type": "array", "items": {"type": "string"}},
+        "official_endpoint_match": {"type": "boolean"},
+        "duplicate_or_contradiction": {"type": "string"}
+      }
+    }
+  }
+}

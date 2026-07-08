@@ -1,0 +1,893 @@
+
+
+--- PAGE 1 ---
+Reliable Detection and Measurement of LLM
+Token Counts
+Executive Summary
+Assumption. No single target LLM, provider, or deployment platform is fixed. This report therefore treats
+token counting as a layered systems problem across three cases: open tokenizer artifacts, closed APIs
+with provider-native counters, and opaque or partially observable services.
+The central conclusion is that there is no platform-independent “true token count” for a request
+unless the exact model family, model version, request shape, and tokenizer/formatter path are
+known. Official provider documentation now states this explicitly in different ways: OpenAI’s input-
+token counter counts the exact payload the model will receive, including formatting tokens for message
+roles and boundaries; Amazon Bedrock says token counting is model-specific and that the returned
+count matches what would be charged for the same request; Anthropic exposes token counting for
+Claude messages; and Google documents both token-count APIs and cases where multimodal counts are
+only estimates before execution. 1
+For production-grade reliability, the best detector stack is hierarchical. First preference is a provider-
+native exact counter for the full payload, or a local tokenizer officially aligned to the target model
+when available. Second preference is a static tokenizer reconstruction from released tokenizer assets.
+Third preference is a hybrid estimator combining local surrogate tokenizers, dynamic API probing, and
+calibration against a small exact-count sample. Uncalibrated heuristics such as “characters divided by
+four” are useful only as coarse budget guards, not as billing- or truncation-grade measurements. 2
+Recent literature makes clear why this hierarchy is necessary. Modern tokenization remains dominated
+by BPE variants, byte-level BPE, WordPiece, and SentencePiece-style BPE/Unigram pipelines, but
+recent work also shows that tokenization is more behaviorally consequential than many practitioners
+assume. BPE merge lists can reveal training-mixture information; non-canonical tokenizations can
+preserve semantics and sometimes improve performance; adversarial tokenizations can bypass safety
+systems; and tokenization multiplicity can even create pricing variation for the same output string. 3
+For very long texts, the report recommends two distinct strategies. If exact tokenizer assets exist, use
+streaming exact counting with seam correction across chunk boundaries. If they do not, use stratified
+window sampling plus a control-variate surrogate tokenizer, and report explicit confidence intervals.
+Long-context benchmarks such as RULER, ∞Bench, LongBench v2, and Needle-in-a-Haystack should be
+used not only to test model reasoning, but also to stress-test the counting system against long inputs,
+deep boundary effects, and mixed-format documents. 4
+A final practical point is that token counting drift is now operationally real. Anthropic documents that
+Claude Sonnet 5 uses a new tokenizer that yields roughly 30% more tokens than Sonnet 4.6 for the same
+text, and Google documents that multimodal preflight token counts may differ from final billed usage.
+Any counting plugin should therefore be version-aware, continuously calibrated, and able to surface
+confidence and disagreement—not just a single integer. 5
+1
+
+--- PAGE 2 ---
+Tokenization Algorithms and Sources of Ambiguity
+Token counting is not just the output of a tokenizer model. In modern stacks it is the result of a pipeline:
+normalization, pre-tokenization, model segmentation, post-processing, and decoding conventions.
+Hugging Face’s tokenizer pipeline documentation makes this decomposition explicit; SentencePiece
+further embeds normalization rules directly into the model artifact; and GPT-style formats may inject
+special structural tokens for messages, channels, boundaries, and tool calls. A counting system that
+ignores any one of these layers will often be systematically wrong. 6
+Tokenization families
+Core Determinism at Main Main counting Common use Key
+Family
+mechanism inference strengths ambiguities pattern sources
+Widely used in
+Depends
+Learns merge modern
+heavily on
+rules by Compact Transformer
+Deterministic upstream
+repeatedly vocabulary, stacks; HF lists
+once normalization
+merging the good BPE as the
+normalization and pre-
+BPE most compression, most popular 7
+and pre- tokenization;
+frequent common and cites
+tokenization structured
+symbol pair subword Llama,
+are fixed wrappers can
+in training reuse Gemma, and
+add extra
+data Qwen2
+tokens
+examples
+Whitespace
+and byte-
+Reversible,
+boundary
+lossless,
+BPE over 256 behavior differ GPT-2-style
+supports
+byte values from tokenizers;
+arbitrary text
+Byte-level BPE rather than Deterministic character- OpenAI 8
+without
+Unicode level intuition; tiktoken -
+<unk> ;
+characters special tokens style encoders
+practical for
+may be added
+raw bytes
+outside raw
+text
+Greedy
+longest- Sensitive to
+match normalization
+segmentation and unknown- Common in
+Simple greedy
+from a token BERT-family
+decoding;
+WordPiece learned Deterministic handling; encoders and 9
+historically
+vocabulary, continuation classifier
+influential
+with markers stacks
+continuation complicate
+markers like reconstruction
+##
+2
+
+--- PAGE 3 ---
+Core Determinism at Main Main counting Common use Key
+Family
+mechanism inference strengths ambiguities pattern sources
+Multiple
+plausible
+Deterministic
+Chooses the Explicit segmentations
+for MAP Often used
+highest- probabilistic exist for the
+decoding, but through
+probability view of same string;
+naturally SentencePiece;
+Unigram LM segmentation segmentation; inference 10
+supports important in
+under a token supports behavior
+multiple multilingual
+probability subword depends on
+tokenizations settings
+model regularization whether
+and sampling
+sampling is
+allowed
+Trains BPE or Language-
+Dummy prefix,
+Unigram independent Common in
+space
+directly on training from multilingual/
+Deterministic escaping, and
+raw text; uses raw text; open
+SentencePiece once model and NFKC-style
+whitespace normalization generative 11
+framework normalizer are normalization
+meta-symbol and models and
+fixed can change
+▁ and whitespace research
+counts
+built-in preserved in pipelines
+unexpectedly
+normalization model design
+Tooling and
+Varies
+May improve public
+information
+compute- counters are
+Emerging granularity
+optimal less mature; Research
+latent or rather than
+Varies by scaling detector frontier, not
+compression- fixing a 12
+implementation compared assumptions yet dominant
+optimized standard
+with standard based on in public APIs
+tokenization subword
+BPE classic
+compression
+compression subwords may
+rate
+fail
+Two foundational observations matter for measurement. First, BPE-style counting is attractive because it
+is reversible, lossless, arbitrary-text capable, and compressive; OpenAI’s tiktoken notes that in
+practice one token corresponds to roughly four bytes on average. Second, SentencePiece’s defaults are
+intentionally not transparent to naive text-length reasoning: it uses a custom NFKC variant, can add a
+dummy prefix, collapses extra whitespace, and replaces normal spaces with the ▁ meta-symbol. These
+design choices are excellent for training and inference consistency, but they create failure modes for
+external counters that only inspect raw characters. 13
+Where ambiguity enters
+The most important ambiguities in token counting are not “algorithm family” questions but pipeline-
+state questions.
+A first ambiguity is normalization. SentencePiece normalizes with a custom NFKC variant by default and
+allows custom rules embedded into the model file itself; these rules are applied before tokenization both
+at training and inference time. That means visually similar strings, full-width forms, combining-mark
+3
+
+--- PAGE 4 ---
+variants, and repeated spaces may collapse into identical normalized inputs even before segmentation is
+attempted. 14
+A second ambiguity is pre-tokenization. Hugging Face documents that pre-tokenizers may split on
+whitespace, punctuation, or even individual digits, and these upstream boundaries constrain
+downstream subword choices. A digit-aware pre-tokenizer, for example, can make "911" behave
+radically differently from a tokenizer that sees the whole string as one unit. This becomes important for
+numerals, identifiers, code, and JSON keys. 15
+A third ambiguity is post-processing and structural wrappers. OpenAI’s current token-count guide
+says the exact count includes request-structure formatting tokens such as roles and boundaries that do
+not appear in the raw user text. In the documented Harmony format for GPT-OSS-style models, structural
+tokens such as <|start|> , <|message|> , <|end|> , and <|channel|> are explicitly part of the token
+stream. Tool schemas, system messages, and conversation wrappers therefore change counts even if the
+natural-language text is unchanged. 16
+A fourth ambiguity is version drift. Anthropic documents that Claude Sonnet 5 uses a new tokenizer and
+that the same input text yields about 30% more tokens than Claude Sonnet 4.6, while Bedrock
+emphasizes that counting is model-specific. Reusing token budgets across model versions is therefore
+not safe. 17
+A fifth ambiguity is non-canonical tokenization. Recent work shows that the same string can admit
+multiple valid tokenizations using a tokenizer’s vocabulary, and that instruction-tuned models can
+remain surprisingly robust to these non-canonical encodings. Separate 2025 work shows that such
+multiplicity can even create arbitrary price variation in LLM-as-a-service settings, especially for non-
+English outputs. For detection engineers, this means “same string” does not always imply “same
+billing trajectory” if the generation path changes. 18
+A sixth ambiguity is hidden or non-user-visible tokens. OpenAI’s guide notes that local tokenizers miss
+model-specific behaviors such as reasoning and caching; Google documents that multimodal preflight
+counts can differ from final usage metadata; and recent auditing work shows that hidden reasoning
+tokens can dominate cost in opaque reasoning APIs. Even a perfect local text tokenizer may therefore be
+unable to explain the final bill. 19
+Detection Methodologies
+A reliable counting system should not depend on one detector. It should behave like a measurement
+instrument with primary, secondary, and fallback channels whose disagreements are themselves
+informative.
+Static analysis of tokenizer artifacts and code
+Static analysis is the strongest route when tokenizer artifacts are available. The goal is to reconstruct the
+exact path from input bytes to token IDs by inspecting:
+• normalization rules,
+• pre-tokenizer configuration,
+• tokenizer model type and vocabulary,
+• post-processor templates for special tokens,
+• model-version mapping.
+4
+
+--- PAGE 5 ---
+Hugging Face exposes the tokenizer pipeline as explicit components; SentencePiece embeds
+normalization choices directly into its model file; and OpenAI’s tiktoken exposes encoding
+constructors and special-token maps programmatically. Static inspection can therefore recover not only
+count behavior, but also many hidden assumptions about whitespace handling, digit segmentation, and
+special-token insertion. Research on BPE merge lists goes further: Hayase et al. show that the ordered
+merge list itself leaks information about training-data mixture, demonstrating how much structure a
+released tokenizer can reveal. 20
+Static analysis is exact for plain-text counting when the released artifacts truly match deployed
+inference. Its main weakness is deployment drift: provider-side wrappers, hidden request packing, or
+undeclared tokenizer upgrades can invalidate a locally “correct” count. Anthropic’s documented
+tokenizer change is a concrete reminder that static assets must be version-pinned and revalidated. 21
+Dynamic probing through APIs and model responses
+Dynamic probing treats the provider as a black box and infers count behavior from observed outputs
+such as token-count endpoints, token listings, or returned usage metadata.
+Official provider support for this has improved substantially. OpenAI offers an input-token counting
+endpoint for the exact Responses payload and explicitly says it includes roles, boundaries, tools, images,
+files, and conversations. Anthropic exposes token counting before message submission. Bedrock
+provides a CountTokens operation whose result matches billable usage for the same request. Google
+exposes both countTokens and, on Gemini Enterprise Agent Platform, token listing with token IDs plus
+a local tokenizer for some models. 22
+Dynamic probing is especially valuable for detecting hidden formatting overhead. By submitting
+controlled request variants that differ in exactly one factor—one extra role, one extra tool property, one
+PDF attachment, one system instruction—you can estimate which structural elements contribute tokens.
+OpenAI’s guide warns that local text tokenization misses these structural tokens; Google’s enterprise
+tooling goes further by exposing the actual token list for text prompts, making boundary analysis
+possible without reverse engineering. 23
+Dynamic probing is also how one should detect provider-specific exceptions. Google states that
+multimodal counts can be only estimates before execution, and the accurate billable figure arrives in
+usage_metadata afterward. Therefore, for multimodal payloads, the dynamic detector should
+distinguish preflight estimate, post-execution billed count, and local surrogate estimate as separate
+quantities. 24
+Hybrid cross-checks, heuristics, and adversarial probes
+The most robust architecture is hybrid. Local/static counters provide low-latency deterministic estimates;
+provider counters provide the closest thing to ground truth; dynamic probing reveals wrapper overheads;
+calibrated heuristics provide fallback coverage when exact methods are unavailable.
+Heuristics still matter, but only after calibration. OpenAI and Google both document rough English-
+language rules of thumb near four characters per token, yet those are expressly approximate and
+language-dependent. They fail badly for CJK text, emoji, mixed code-and-natural-language prompts, or
+aggressively normalized Unicode. A calibrated density model should therefore be stratified by script,
+format, and domain rather than using one global ratio. 25
+5
+
+--- PAGE 6 ---
+Adversarial probes are now a necessity, not an academic luxury. “Broken Tokens?” shows that models
+can remain performant under non-canonical tokenizations; “Adversarial Tokenization” shows that
+changing token-space representations without changing the visible text can circumvent safeguards; and
+TokenBreak demonstrates how token-manipulation attacks can defeat classifier-based guardrails while
+leaving downstream semantics intact. A counting detector that passes only easy English prose but fails
+on adversarial Unicode, numerical regroupings, or boundary manipulations is not production-ready. 26
+Long-text streaming and chunking strategies
+Long inputs introduce a different class of error: boundary error. If text is chunked before counting,
+merges or whole-token matches that would have crossed a chunk boundary become impossible, so the
+sum of per-chunk counts can differ from the true whole-document count. This matters for BPE,
+WordPiece, and Unigram alike, though the boundary mechanisms differ. Long-context benchmarks such
+as RULER, ∞Bench, LongBench v2, and Needle-in-a-Haystack provide appropriately demanding lengths
+and mixed-task structures for testing such effects. 4
+When local exact tokenization exists, the right strategy is streaming tokenization or chunking with
+seam correction. When exact tokenization does not exist, the right strategy is chunk-level exact API
+counting plus sampled seam audits and a global confidence interval. This report formalizes those
+methods in the next section.
+Method comparison
+Access Recommended
+Method Best use Reliability Blind spots Sources
+required role
+Hidden
+post-
+execution
+Closed APIs,
+Highest for behaviors;
+Provider- API support structured Primary
+same model/ multimodal
+native exact for count requests, whenever 27
+version/ may still be
+counter endpoint billing-grade available
+payload preflight-
+input counts
+only on
+some
+platforms
+Provider
+Official local Fast preflight Very high for
+wrappers, Primary for
+tokenizer or checks, text if
+Local official hidden open or SDK-
+aligned privacy- deployment 28
+tokenizer reasoning/ supported
+tokenizer sensitive matches
+caching, models
+assets deployments assets
+version drift
+Tokenizer Hidden
+Static JSON / Open weights High for server-side
+Secondary /
+tokenizer SentencePiece and audit reconstructed formatting 29
+audit
+reconstruction model / scenarios text path and silent
+vocab-merges upgrades
+6
+
+--- PAGE 7 ---
+Access Recommended
+Method Best use Reliability Blind spots Sources
+required role
+Detect Rate limits,
+Ability to
+hidden noise from
+Usage-field submit Medium to
+overhead, prompt
+finite controlled high if well Secondary 23
+infer packing,
+differences requests and designed
+structural unavailable
+read usage
+costs token lists
+Family
+Provider identification, High for text- Often
+Token listing support for boundary only unavailable; Diagnostic
+30
+with token IDs token debugging, supported sometimes gold
+inspection regression paths text-only
+tests
+Very long
+texts, Domain/
+Calibrated Moderate
+Small unknown script shift,
+heuristic after Fallback 25
+calibration set models, structured
+density model calibration
+offline overhead
+planning
+Detect Does not
+normalization Necessary for itself give
+Adversarial Any counting Mandatory
+and token- robustness exact 31
+probe suite interface validation
+space failure testing production
+modes counts
+No
+Yes Countfullpayload Localal a ig v n ai e la d b t l o e kenizer
+Yes Staticcross-check Discrepancyanalyzer Confidence-scoredresult reg D r r e if s t s m io o n n d it a o s r h a b n o d ard
+Inputpayload Exactp a ro va v i i l d a e b r le counter
+Yes Staticexacttextcount
+No Toke a n v iz a e il r a a b r l t e ifacts Dynamic p fi r n o it b e e -d s ifference
+No Calibr e a s t t e i d m s a u to rr r ogate
+Algorithms, Statistical Tests, and Confidence Estimation
+This section gives concrete algorithms suitable for implementation and audit.
+Detecting hidden tokenization behavior
+Let y i be the observed provider-side token count for probe input x i. Let c i
+(f)
+be the count predicted by
+candidate tokenizer family f after reproducing its full known pipeline. For each candidate family, fit a
+calibration model
+y = α +β
+c(f)
++ε
+i f f i i
+7
+
+--- PAGE 8 ---
+and score it by cross-validated RMSE, median absolute error, and maximum absolute error. The best
+family is not merely the one with the smallest average error, but the one that also passes an equivalence
+test within a predeclared tolerance, for example ±1 token or ±1%. In practice I recommend a two one-
+sided tests procedure on residuals over a held-out probe set. If no family passes equivalence, treat the
+tokenizer as hidden, drifted, or wrapped by extra formatting. This approach is motivated by the fact that
+tokenizer families differ systematically in normalization, segmentation, and structure insertion, while
+provider-side wrappers add approximately affine overheads. 32
+To detect normalization and whitespace behavior, define a transformation family g over paired strings:
+NFC vs NFKC, normal spaces vs non-breaking spaces, repeated spaces vs single spaces, leading-space vs
+no-leading-space, full-width digits vs ASCII digits, joined emoji vs decomposed sequences, and so on. For
+each pair compute
+d = count(g(x ))−count(x ).
+i i i
+Then apply a paired permutation test, Wilcoxon signed-rank test, or exact sign test depending on
+sample size and distribution shape. Report the median shift, bootstrap confidence interval, and the
+proportion of probes with non-zero deltas. SentencePiece’s documented defaults imply that these tests
+often detect meaningful normalization and whitespace canonicalization, while OpenAI’s and Google’s
+payload-level counters reveal whether the same phenomenon survives the provider’s wrapper path.
+33
+To estimate hidden structural overhead, construct a designed experiment where raw text is fixed and
+only payload structure changes. Examples: one vs two messages, tool schema with p properties, system
+instruction added or removed, file attachment present or absent. Fit a robust regression
+y = γ +γ ⋅raw_text_tokens+γ ⋅#messages+γ ⋅#tool_props+γ ⋅schema_bytes+⋯+ϵ.
+0 1 2 3 4
+Large significant coefficients quantify hidden formatting behavior. This is directly aligned with OpenAI’s
+and Google’s official statements that structural request tokens are real and non-trivial. 34
+Exact and approximate long-text counting
+If you have a local aligned tokenizer, the target should be exact streaming, not approximation. The ideal
+implementation processes the document as a byte or Unicode stream while maintaining a rolling state
+for the tokenizer’s boundary-sensitive logic. When a library does not expose true streaming, chunk with
+overlap and correct seams.
+Let the document be partitioned into chunks C 1 ,…,C k, and let t(⋅) be the tokenizer count. The naive
+chunk sum is
+k
+S = t(C ),
+∑ i
+i=1
+but this is biased because token matches that cross a boundary are lost. Define a left overlap suffix L j
+from the end of C j and a right overlap prefix R j+1 from the start of C j+1. A seam correction is
+δ = t(L ∥R )−t(L )−t(R ),
+j j j+1 j j+1
+and the corrected estimate is
+8
+
+--- PAGE 9 ---
+k−1
+T^ = S + δ .
+∑ j
+j=1
+If the overlap window covers all practically relevant token spans after normalization,
+T^
+is exact. In
+practice, choose overlap from tokenizer statistics—for example the 99th percentile or max token byte
+span seen in the vocabulary—and verify with sampled seams. This is especially important for byte-level
+BPE and SentencePiece-style tokenizers whose normalization and space-prefix behavior can make seam
+effects surprisingly persistent. 13
+If no local exact tokenizer exists, use a stratified density estimator. Partition the document into strata h
+by script or format—English prose, CJK prose, code, JSON/Markdown, tables, numerals-heavy sections.
+Sample windows from each stratum and obtain exact counts from the provider counter when possible.
+Let B h be total bytes in stratum h, and let ρ^ h be estimated tokens per byte from sampled windows. Then
+T^ = B ρ^ .
+∑ h h
+h
+An approximate standard error is
+B2s2
+SE(T^) = h h,
+∑ n
+h
+h
+where s h 2 is sample variance of token density in stratum h and n h is the number of sampled windows.
+Report either a normal-approximation interval T^±z 1−α/2 SE or, preferably, a bootstrap interval over
+windows. The stratification is justified because official English rules of thumb are only approximate and
+modern tokenizers are strongly format- and language-sensitive. 35
+A strong refinement is the control-variate estimator. Let z i be window counts from a cheap surrogate
+tokenizer such as tiktoken , Hugging Face, or another closest-available family. Estimate
+Cov(t,z)
+T^ = T^+β(Z −Z^), β = .
+cv
+Var(z)
+Here Z is the surrogate’s full-document count and Z^ is the surrogate count estimated from the same
+sampled windows used for provider counts. This reduces variance when the surrogate is correlated with
+the true counter even if it is biased. It is usually the best fallback for unknown or partially hidden
+tokenizers. 28
+Cross-validation and discrepancy reconciliation
+Independent detectors should be combined only after explicit calibration. I recommend four layers of
+reconciliation:
+Technique Purpose Procedure Output
+Leave-one- Detect brittle
+Recompute final estimate with Sensitivity
+detector-out cross- dependence on one
+each detector removed in turn profile
+validation detector
+9
+
+--- PAGE 10 ---
+Technique Purpose Procedure Output
+Use weighted median or
+Stable central
+Robust consensus Resist outliers trimmed mean over calibrated
+estimate
+detectors
+Weight detector m by w m ∝ Minimum-
+Inverse-variance Exploit good
+1/σ^2 using recent validation variance
+m
+weighting calibration
+residuals ensemble
+Store recent absolute residuals Empirical
+Residual Distribution-free
+on a validation corpus and take prediction
+conformal interval uncertainty
+the relevant quantile interval
+This framework is preferable to naive averaging because token-count failures are usually structured
+rather than random. A local tokenizer may be perfect on plain text yet wrong on tool schemas; a provider
+preflight API may be exact on text but only estimated on video; a heuristic may be decent on English
+prose and poor on CJK or emoji-heavy text. Official documentation already signals these non-
+uniformities, so an ensemble that ignores them will miscalibrate uncertainty. 36
+A practical discrepancy taxonomy is also useful. Large disagreement between local exact text count and
+provider exact payload count usually indicates wrapper overhead. Large disagreement between
+provider preflight and post-execution usage suggests multimodal estimation mismatch or caching
+effects. Large disagreement between multiple local tokenizers but low provider residuals indicates
+family mismatch resolved by calibration. Persistent unexplained residuals after version updates are
+drift alarms and should be treated as possible tokenizer changes, as Anthropic’s migration notice
+illustrates. 37
+Recommended detector stacks
+Deployment Secondary
+Primary detector Fallback Confidence policy
+scenario detector
+Open-weight
+Static artifact Calibrated Return exact
+model with Local exact
+diff + seam surrogate on held- unless version/
+released tokenizer
+tests out corpus hash mismatch
+tokenizer
+Local Confidence
+Closed text-only
+Provider counter surrogate for Stratified density near-1 for input
+API with exact
+on full payload regression estimator count; flag drift if
+count endpoint
+alarms residuals rise
+Closed API with
+Dynamic finite- Calibrated Wider interval;
+usage fields but Heuristic density
+difference local require ongoing
+no count estimate
+probes surrogate calibration
+endpoint
+Provider
+None for strict
+preflight Local text-only Distinguish
+billing unless
+Multimodal API estimate and count for text estimate vs billed
+provider returns
+post-execution portion count in API
+final metadata
+usage metadata
+10
+
+--- PAGE 11 ---
+Deployment Secondary
+Primary detector Fallback Confidence policy
+scenario detector
+Opaque CoIn-style or
+Returned visible Treat as Report epistemic
+reasoning / predictive
+counts + audit unauditable for uncertainty
+hidden-token external
+metadata if any exactness explicitly
+billing auditor
+The hidden-token billing row is intentionally conservative. Recent work such as CoIn shows promising
+audit strategies based on verifiable commitments and semantic checks, but these require provider
+cooperation or additional assumptions. Without such cooperation, a plugin can flag anomalies, not
+certify invisible-token correctness. 38
+Illustrative error trend
+The following schematic chart summarizes the expected trend after calibration. The three lines
+correspond, in order, to exact provider/local counting, calibrated hybrid estimation, and uncalibrated
+heuristics. It is an engineering synthesis of the methods above, not a benchmark result from one paper.
+Illustrative relative error versus text length
+4
+3.5
+3
+2.5
+2
+1.5
+1
+0.5
+0
+1k 10k 100k 1M
+This rising-gap pattern is consistent with what provider docs and tokenizer engineering imply: exact
+model-native counting remains stable, calibrated surrogates accumulate only modest seam and domain-
+shift error, and broad heuristics accumulate bias as the text becomes longer and more heterogeneous.
+%rorreevitaleR
+39
+11
+
+--- PAGE 12 ---
+Evaluation Framework and Recommended Experiments
+A serious counting system should be evaluated on tokenization behavior, counting accuracy,
+uncertainty calibration, robustness, and cost/performance.
+Datasets and stress suites
+Why it matters for
+Dataset / suite What it adds token-count Key properties Sources
+evaluation
+Lets you vary length
+and complexity Flexible contexts,
+Synthetic long-
+independently; multi-hop tracing,
+RULER context tasks beyond 40
+excellent for seam- aggregation, open-
+simple retrieval
+error and scaling source benchmark
+sweeps
+Strong for mixed Average length
+Super-long-context realistic/synthetic above 100K
+∞Bench /
+tasks exceeding 100K long contexts and tokens; English 41
+InfiniteBench
+tokens cross-domain and Chinese; code,
+behavior math, QA
+Useful for testing 503 MCQ tasks, 8K
+Realistic difficult mixed structures and to 2M words, six
+LongBench v2 long-context realistic workflows task categories, 42
+reasoning rather than synthetic nearly 100
+needles alone contributors
+Context-length ×
+Controlled retrieval Simple and highly
+depth sweeps;
+Needle-in-a- sweeps over context interpretable for
+JSONL outputs; 43
+Haystack v2 length and needle boundary-placement
+multi-fact and
+depth experiments
+UUID-chain tasks
+Unicode,
+No public benchmark
+normalization, Pairwise
+Custom fully covers tokenizer
+numerals, code, transforms and
+adversarial edge cases; this is 44
+JSON, emoji, RTL, fuzzed boundary
+corpus mandatory for
+ZWJ, repeated cases
+production
+punctuation
+Metrics
+For count accuracy, measure mean absolute error, median absolute error, signed bias, relative absolute
+error, worst-case error, and the 95th and 99th percentiles of absolute error. Signed bias is important
+because undercounting and overcounting create different operational risks: truncation failures versus
+over-budget rejections. Provider-guided exact counters should be evaluated against output usage
+metadata where applicable, especially on Google’s multimodal paths where preflight estimates may
+differ from final usage. 24
+12
+
+--- PAGE 13 ---
+For behavior detection, use precision, recall, and F1 for each hidden behavior class: normalization
+present, digit splitting present, wrapper overhead present, tokenizer-family correctly identified, version
+drift detected, and multimodal preflight mismatch flagged. For discrepancy scores or anomaly scores,
+also report AUROC and PR-AUC. Recent auditing literature on opaque services argues strongly for
+separating quantity-verification from semantic-validity verification; the same principle applies to
+tokenization detectors. 38
+For uncertainty, report nominal versus empirical interval coverage. If a method claims a 95% interval, it
+should contain the true count about 95% of the time on held-out documents stratified by language and
+format. Also record interval width as a function of length, script mix, and detector availability. This is
+where many approximate counters fail in practice: their point estimates can look decent on average while
+their uncertainty is badly under-calibrated. 45
+For systems performance, measure throughput in bytes/sec or tokens/sec, peak resident memory, API
+calls per document, and privacy exposure. This matters because counting is often placed inside routing
+or chunking loops. OpenAI’s tiktoken reports 3–6× speedups over a comparable open-source
+tokenizer in its README, and Google explicitly notes that local counting can simplify large-prompt
+operation because API-based counting may be memory-intensive. 28
+Recommended experiments
+A rigorous experiment plan should include the following.
+First, run a family-identification benchmark. Use short probe strings spanning ASCII, CJK, emoji,
+numbers, code, JSON, whitespace variants, and combined marks. Compare candidate local tokenizers
+against provider counts using equivalence testing and cross-validated RMSE. This detects whether the
+target acts like byte-level BPE, SentencePiece BPE, Unigram, or WordPiece with hidden wrappers. 46
+Second, run a normalization and wrapper-ablation benchmark. Use paired strings that differ only in
+NFC/NFKC form, full-width forms, repeated spaces, tabs, non-breaking spaces, and leading/trailing
+whitespace. Then vary payload shape—single message, multi-message, tools, files, system instructions.
+Assess paired significance and structural regression coefficients. 47
+Third, run a long-text seam benchmark. On RULER, ∞Bench, and LongBench v2 contexts, compare
+whole-document truth against chunked estimates for chunk sizes such as 2K, 8K, and 32K tokens and
+overlap sizes such as 32, 64, 128, and 256 bytes or characters. Report seam-bias distributions, not just
+averages. 48
+Fourth, run an adversarial tokenization suite. Include non-canonical tokenization probes, right-aligned
+digit regroupings, character-split strings, prefix-letter perturbations, and safety-wrapper attack strings.
+This is necessary both because recent research shows non-canonical tokenizations can preserve
+semantics and because safety pipelines can be brittle to token manipulation. 31
+Fifth, run a drift-monitoring experiment. Recompute counts weekly or on each model-version change
+for a fixed canary corpus. Any systematic shift in affine calibration parameters, residual variance, or
+family-classification confidence should raise an alert. Anthropic’s published tokenizer change is exactly
+the kind of event this monitor is meant to catch. 21
+13
+
+--- PAGE 14 ---
+Deployment Guide for a Production Plugin
+Architecture
+A production plugin should expose one consistent API while internally supporting multiple detector types
+and strict privacy controls.
+Application
+TokenCountPluginAPI
+Orchestrator
+CacheanRdeMgiostdreyl-Version PrivacyGuard LocalTokenizerAdapters RemoteProviderAdapters Long-TextEstimator DiscrepMaonncyitoanrdDrift MetricsandAuditLog
+tiktokenorGPT-styleBPE SentenUcneigPrieacmeBPE/ WHoFrTdoPkieecneiz/BerPsE OpenAIinputtokencount Anthropictokencounting BedrockCountTokens Gemcoinmipcouuten_ttTookkeennssor Streamingexactcounter Seamcorrection Stratifiedsampler Control-variateensemble
+This architecture is justified by current provider capabilities. OpenAI, Anthropic, Bedrock, and Google all
+now expose counting or usage metadata interfaces; Google additionally supports local token counting
+and token listing in some SDK paths; and open ecosystems expose tokenizer model artifacts through
+tiktoken , Hugging Face, and SentencePiece. 49
+Suggested API surface
+A useful deployment surface is small:
+count(payload, model, mode="auto") -> {
+estimated_tokens: int,
+lower_ci: int | null,
+upper_ci: int | null,
+method: str,
+exactness: "exact" | "calibrated" | "heuristic",
+detector_breakdown: [...],
+warnings: [...]
+}
+detect_behavior(model, probe_suite="default") -> {
+likely_family: str | null,
+normalization_flags: {...},
+structural_overhead: {...},
+drift_score: float,
+confidence: float
+}
+estimate_long(stream, model, target_error=None, budget=None) -> {
+estimated_tokens: int,
+lower_ci: int,
+upper_ci: int,
+sampled_windows: int,
+seam_audits: int
+}
+14
+
+--- PAGE 15 ---
+The key design decision is to return method and confidence metadata rather than just a count. Current
+provider docs and recent auditing papers show that “count” may mean different things—exact input
+count, preflight estimate, final billed total, or total including hidden reasoning—and the plugin should
+not collapse them silently. 19
+Pseudocode
+classTokenCountPlugin:
+defcount(self, payload, model, mode="auto"):
+meta = self.lookup_model_version(model)
+cached = self.cache.get(payload, meta.version)
+if cached:
+return cached
+if mode in ("auto", "remote_exact"):
+remote = self.try_remote_exact(payload, model)
+if remote.ok:
+local = self.try_local_exact(payload, model, text_only=True)
+result = self.reconcile(remote=remote, local=local)
+self.cache.put(payload, meta.version, result)
+return result
+local = self.try_local_exact(payload, model, text_only=True)
+if local.ok and payload.is_text_only():
+seam_checked = self.long_text_exact_if_needed(payload, local)
+self.cache.put(payload, meta.version, seam_checked)
+return seam_checked
+probes = self.run_behavior_probes_if_needed(model)
+calibrated = self.estimate_with_surrogate(payload, model, probes)
+self.cache.put(payload, meta.version, calibrated)
+return calibrated
+deflong_text_exact_if_needed(self, payload, local_counter):
+if payload.length < self.cfg.streaming_threshold:
+return exact_result(local_counter.count(payload.text))
+chunks = chunk_stream(payload.text, size=self.cfg.chunk_size,
+overlap=self.cfg.overlap)
+total = 0
+seams = []
+for ch in chunks:
+total += local_counter.count(ch.body)
+if ch.has_prev:
+seams.append(self.seam_delta(local_counter, ch.prev_suffix, ch.curr_prefix))
+return exact_result(total + sum(seams))
+defestimate_with_surrogate(self, payload, model, probes):
+strata = stratify(payload.text)
+samples = sample_windows(strata, budget=self.cfg.sample_budget)
+15
+
+--- PAGE 16 ---
+observed = [self.remote_or_usage_count(w, model) for w in samples]
+surrogate = [self.closest_local_surrogate(w, probes.family) for w in samples]
+estimator = fit_control_variate(observed, surrogate, strata)
+return estimator.predict_full(payload.text)
+Performance, memory, and streaming
+For text-only paths, use a native or Rust-backed tokenizer whenever possible. OpenAI’s tiktoken
+reports a 3–6× speed advantage over a comparable open-source tokenizer in its benchmark setup, which
+matters for online chunking and preflight validation loops. For Gemini, Google explicitly documents a
+local tokenizer path and notes that remote counting of large prompts can be memory-intensive, so local
+counting is preferable whenever it is officially supported. 28
+Memory handling should be streaming-first. Large documents should be read from a stream, memory-
+mapped if available, and stratified incrementally rather than fully loading and normalizing the whole
+document before counting. The implementation should maintain small rolling suffix buffers for seam
+correction and avoid duplicate copies of normalized text. SentencePiece-style normalization is
+particularly important here because normalization may change whitespace and prefix behavior before
+segmentation. 14
+Language support
+Do not present one global character-to-token ratio as “multilingual support.” Proper language support
+means at least script-aware calibration buckets: Latin prose, code, CJK, Arabic/Hebrew with bidirectional
+markers, emoji-heavy text, numerals-heavy text, and mixed-format markup. SentencePiece was designed
+to operate directly on raw Unicode text for language-independent pipelines, but official English rules of
+thumb from providers remain just that—English rules of thumb. The plugin should therefore keep per-
+stratum residual statistics and show confidence degradation when a document’s stratum mix differs
+from calibration data. 50
+Security and privacy
+Security defaults should favor local counting first. If remote probing is required, redact identifiers where
+possible, sample short windows rather than shipping whole documents, hash cached documents with
+model-version salt, and log only aggregate statistics unless explicit audit mode is enabled. This is
+especially important because recent auditing research highlights asymmetries between user visibility
+and provider-side hidden operations; a counting plugin should not create a second hidden-observability
+problem of its own. 38
+Limitations, Failure Modes, and Mitigation
+The first limitation is conceptual: input token counting is easier than total cost auditing. For input
+payloads, provider-native counters can be highly authoritative. For hidden reasoning tokens or internal
+tool calls, however, exact validation may be impossible without provider cooperation. CoIn and related
+auditing proposals are promising because they combine quantity verification with semantic verification,
+but these remain research solutions or cooperation-dependent designs, not drop-in universal fixes. Treat
+invisible-token bills as partially observable unless the provider exposes verifiable commitments. 38
+The second limitation is model/version drift. Even if your static reconstruction was exact yesterday, an
+undeclared back-end change can silently invalidate it tomorrow. Anthropic’s published tokenizer
+16
+
+--- PAGE 17 ---
+migration is a documented example, but silent changes can happen elsewhere too. The mitigation is
+straightforward: pin versions where possible, maintain a canary corpus, and refuse to label counts as
+exact if the observed residual distribution shifts materially. 17
+The third limitation is multimodal mismatch. Google explicitly says some multimodal preflight counts
+are estimates based on media resolution and may not match final consumed tokens; the accurate billing
+usage comes after execution. The mitigation is to represent two numbers in the API—preflight estimate
+and post-execution billed count—and never reuse one as the other. 51
+The fourth limitation is boundary error on long texts. Any approximate or chunk-local method can
+accumulate seam bias, especially when normalization, whitespace-prefix policies, or long merges matter.
+The mitigation is seam correction with overlap, sampled seam audits, and interval reporting that
+explicitly accounts for residual seam uncertainty. Long-context datasets should be part of the regression
+suite for this reason. 52
+The fifth limitation is adversarial or non-canonical behavior. Recent papers show that models are more
+robust to non-canonical tokenizations than earlier assumptions suggested, and adversarial tokenization
+can manipulate safety outcomes without visibly changing text. That means a detector may correctly
+count the canonical path while missing meaningful alternate encodings or vulnerabilities in upstream
+components such as classifiers and prompt guards. The mitigation is a standing adversarial probe suite
+and a policy that no tokenizer integration is “done” until it passes normalization, numeral, Unicode,
+and token-manipulation tests. 31
+The sixth limitation is privacy leakage through counting itself. Because tokenizer artifacts and counts
+can reveal meaningful information—Hayase et al. show merge lists leak training-mixture information—
+measurement tools should not be treated as harmless metadata utilities. The mitigation is least-privilege
+access to tokenizer assets, redacted telemetry, and local-only modes for sensitive corpora. 53
+In practical terms, the safest deployment posture is this: call a count exact only when it is produced by a
+provider-native exact counter or a version-matched local tokenizer over the full effective payload; call it
+calibrated when it comes from a validated ensemble with empirical coverage; call it heuristic otherwise.
+That semantic discipline is as important as any algorithm.
+1 2 16 19 22 23 27 34 36 37 39 49 Counting tokens | OpenAI API
+https://developers.openai.com/api/docs/guides/token-counting
+3 53 proceedings.neurips.cc
+https://proceedings.neurips.cc/paper_files/paper/2024/file/10e6dfea9a673bef4a7b1cb9234891bc-Paper-Conference.pdf
+4 40 48 arxiv.org
+https://arxiv.org/pdf/2404.06654
+5 17 21 What's new in Claude Sonnet 5 - Claude Platform Docs
+https://docs.anthropic.com/en/docs/about-claude/models/whats-new-sonnet-5
+6 15 20 32 The tokenization pipeline • Hugging Face
+https://huggingface.co/docs/tokenizers/pipeline
+7 Neural Machine Translation of Rare Words with Subword ...
+https://aclanthology.org/P16-1162.pdf?utm_source=chatgpt.com
+17
+
+--- PAGE 18 ---
+8 Tokenization algorithms • Hugging Face
+https://huggingface.co/docs/transformers/main/tokenizer_summary
+9 46 Components — tokenizers documentation
+https://huggingface.co/docs/tokenizers/python/latest/components.html
+10 Subword Regularization: Improving Neural Network ...
+https://aclanthology.org/P18-1007/?utm_source=chatgpt.com
+11 50 SentencePiece: A simple and language independent subword tokenizer and detokenizer for
+Neural Text Processing.
+https://aclanthology.org/D18-2012.pdf
+12 Compute Optimal Tokenization | Research - AI at Meta
+https://ai.meta.com/research/publications/compute-optimal-tokenization/
+13 28 GitHub - openai/tiktoken: tiktoken is a fast BPE tokeniser for use with OpenAI's models. • GitHub
+https://github.com/openai/tiktoken
+14 29 33 44 47 52 sentencepiece/doc/normalization.md at master • google/sentencepiece • GitHub
+https://github.com/google/sentencepiece/blob/master/doc/normalization.md
+18 26 31 [2506.19004] Broken Tokens? Your Language Model can Secretly Handle Non-Canonical
+Tokenizations
+https://arxiv.org/abs/2506.19004
+24 51 Use the Count Tokens API | Gemini Enterprise Agent Platform | Google Cloud Documentation
+https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/get-token-count
+25 35 What are tokens and how to count them?
+https://help.openai.com/en/articles/4936856-what-are-tokens-and-how-to-count-them?utm_source=chatgpt.com
+30 List and count tokens | Gemini Enterprise Agent Platform | Google Cloud Documentation
+https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/capabilities/list-token
+38 arxiv.org
+https://arxiv.org/pdf/2505.13778
+41 aclanthology.org
+https://aclanthology.org/2024.acl-long.814.pdf
+42 [2412.15204] LongBench v2: Towards Deeper Understanding and Reasoning on Realistic Long-context
+Multitasks
+https://arxiv.org/abs/2412.15204
+43 GitHub - gkamradt/needle-in-a-haystack: Doing simple retrieval from LLM models at various context
+lengths to measure accuracy • GitHub
+https://github.com/gkamradt/needle-in-a-haystack
+45 Understand and count tokens | Gemini API | Google AI for Developers
+https://ai.google.dev/gemini-api/docs/tokens
+18

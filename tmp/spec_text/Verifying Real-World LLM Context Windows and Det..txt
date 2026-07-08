@@ -1,0 +1,873 @@
+
+
+--- PAGE 1 ---
+Verifying Real-World LLM Context Windows and
+Detecting Mid-Session Provider Switching
+Executive Summary
+Advertised context windows are not the same thing as effective usable context. Across the current
+literature, long-context models routinely show strong performance on easy retrieval probes yet degrade
+on harder tasks that require positional robustness, multi-hop reasoning, long dialogue memory, or long
+tool catalogs. The consistent pattern is that simple “needle in a haystack” tests can overestimate real
+capability, while deeper probes reveal positional bias, truncation, retrieval failures, and multi-turn
+memory decay. “Lost in the middle” remains one of the most persistent failure modes, and newer
+benchmarks such as RULER, NoLiMa, LongBench v2, LongMemEval, Loong, InfiniteBench, and
+LongFuncEval all show that real long-context competence is much weaker than headline token limits
+suggest. 1
+For a provider-agnostic audit, the strongest practical approach is not a single benchmark. It is a layered
+test program that combines: precise single-turn synthetic retrieval probes; continuous high-intensity
+multi-turn sessions with seeded random facts, updates, and reversals; mixed workloads that add
+structured data, tool-like schemas, and long catalogs; and a separate endpoint-integrity layer that
+measures behavioral fingerprints, returned metadata, usage counters, truncation behavior, and latency
+distributions over time. Academic work from 2025–2026 shows that active fingerprinting, stability
+monitoring, knowledge-boundary probes, and statistical model-equality tests can detect many
+substitutions and mixed-routing attacks, but newer work also shows that adversarial spoofing can defeat
+naive fingerprinting. That means fraud detection must be treated as probabilistic, multi-signal evidence
+rather than proof from any single test. 2
+The most defensible experimental design therefore has five properties. First, use randomly generated,
+seeded, non-sensitive data to avoid leakage and memorization confounds. Second, build length
+sweeps that go from well below to above the claimed limit, with probe positions spread across the
+beginning, middle, and end. Third, separate cold-cache and warm-cache lanes, because official provider
+docs show that caching materially changes latency and sometimes billing. Fourth, record all observable
+metadata that the API exposes, such as request IDs, returned model/version strings, token usage, cache-
+hit counters, stop reasons, and finish reasons. Fifth, require multiple independent detectors before
+escalating a fraud alert, because hidden routing, RAG, policy changes, safety layers, quantization, or
+infrastructure moves can all create false positives even when the endpoint remains “honest” at the
+vendor/API layer. 3
+The short operational recommendation is this: use context probing to measure capability; use
+fingerprinting and change detection to measure endpoint integrity; use both continuously. For
+production monitoring, I would prioritize exact-match beacons, latent-association probes, superseded-
+fact dialogue tests, knowledge-boundary prompts, output-style fingerprint prompts, and a change-point
+detector over latency, token usage, and response embeddings or lexical fingerprints. That combination
+gives high coverage of both real context degradation and suspicious backend changes while keeping cost
+and query volume manageable. 4
+1
+
+--- PAGE 2 ---
+Context Windows and Failure Modes
+A context window is the model’s effective working memory for the current request, not the model’s
+full training corpus. Official vendor documentation converges on the same basic concept: the context
+window is the input the model can reference while producing output, and in real APIs the full request
+structure often matters, including system instructions, conversation history, tool definitions, files,
+images, and sometimes reasoning or thinking tokens. Anthropic explicitly documents that all request
+content and generated output count toward the window, including cache-read and cache-creation input
+tokens; OpenAI documents that local tokenizers can miss provider-specific accounting because tools,
+schemas, files, reasoning, and caching affect true tokenization; Google documents both model-specific
+context windows and usage counters such as prompt, cached, and candidate token counts. 5
+That distinction matters because there are at least four different notions of “context length” in practice.
+There is the advertised maximum input limit, the joint input-plus-output budget, the effective
+retention depth at which the model can still retrieve needed information, and the task-conditional
+usable context once tools, schemas, or long dialogue histories are added. Long-context papers
+repeatedly show that the first number can be much larger than the third and fourth. RULER was created
+precisely to ask “what is the real context size,” and found that near-perfect scores on vanilla needle
+tests can coexist with large performance drops as length and task complexity increase. Lost in the Middle
+showed a strong positional bias where performance is usually best when relevant information is near the
+beginning or end and worst when it is in the middle. NoLiMa then showed that many long-context
+evaluations are flattered by literal lexical overlap between question and answer-bearing passage; once
+that overlap is removed, performance drops sharply as length rises. 6
+The most important failure modes for real-world verification are therefore broader than raw truncation.
+The first is hard truncation, where some portion of the prompt is dropped or summarized before the
+model sees it. The second is soft retention failure, where the model technically “sees” the tokens but
+fails to retrieve or reason over the relevant ones. The third is positional distortion, especially the well-
+studied middle-context deficit. The fourth is session-memory corruption, where old facts persist after
+they should be superseded, or recent facts fail to overwrite earlier ones. The fifth is tool-context
+overload, where long tool catalogs, long tool responses, or structured schemas consume context and
+degrade the model’s ability to choose the right function or retrieve the right field. LongMemEval,
+LoCoMo, DialSim, and LongFuncEval all document variants of these multi-turn and tool-related failures.
+7
+A separate but related problem is that operational features change what you observe even if the base
+model is unchanged. Prompt caching can materially reduce latency and effective input cost; Anthropic,
+OpenAI, and Google all document prompt or context caching in ways that can produce large timing
+differences between cold and warm runs. Model aliases can also move over time: OpenAI recommends
+pinning specific model snapshots for consistent behavior, and Google explicitly documents stable,
+preview, latest, and experimental aliases, with “latest” designed to move as new versions ship. These
+are legitimate and documented reasons why “the same endpoint” can change without fraud. Any audit
+plan that ignores them will generate avoidable false positives. 8
+Literature and Source Landscape
+The long-context evidence base since 2022 is now large enough that the main methodological lesson is
+clear: use multiple benchmark families. Early and influential work like LongBench and Lost in the
+Middle established that long-context evaluation needs both task diversity and explicit position controls.
+Later work expanded in different directions: RULER added flexible synthetic tasks beyond simple
+2
+
+--- PAGE 3 ---
+retrieval; InfiniteBench pushed evaluation beyond 100K tokens; Loong focused on realistic multi-
+document scenarios where every document matters; LongBench v2 emphasized deep reasoning over
+real tasks up to very large contexts; NoLiMa attacked the lexical-overlap loophole in needle-style tests; U-
+NIAH unified several needle configurations and compared RAG with direct long-context use;
+LongMemEval and LoCoMo focused on long-term conversational memory; and LongFuncEval showed
+that tool calling adds its own long-context failure modes. 9
+The endpoint-integrity and fraud literature is newer but rapidly maturing. LLMmap framed active LLM
+fingerprinting as an “nmap-like” probing problem for model identification. Scalable Fingerprinting of
+Large Language Models proposed more persistent, scalable fingerprints. Auditing Black-Box LLM APIs
+with a Rank-Based Uniformity Test formalized the problem as model-equality testing and emphasized
+query efficiency and robustness to rerouting. Are You Getting What You Pay For? focused directly on
+model substitution in LLM APIs and highlighted limitations of output-only methods, especially against
+subtle or adaptive attacks. KBF introduced knowledge-boundary probes and reported strong
+performance even on economically relevant substitutions and low-rate mixed routing. Stability Monitor
+reframed the problem as endpoint change detection over time, showing that effective identity can shift
+because of weights, tokenizers, quantization, inference stack, routing, prompts, or hardware. The 2026
+GhostPrint work then showed that naive user-side fingerprinting can be spoofed by adversarial providers
+fine-tuning weaker models to mimic stronger ones. 10
+A useful practical reading of that literature is that long-context verification and fraud detection are
+adjacent but distinct tasks. Long-context benchmarking asks, “Can this endpoint actually use long
+inputs well?” Fraud auditing asks, “Is this endpoint the model or configuration it claims to be?” One
+can fail without the other. An endpoint might honestly serve the advertised model yet still perform poorly
+on long contexts; conversely, a substituted endpoint might preserve superficial benchmark scores while
+drifting in style, latency, or edge-case behavior. Surveys published in 2025–2026 now treat fingerprinting,
+watermarking, and behavioral identity as a coherent area with their own taxonomies and benchmarks,
+including LeaFBench. 11
+The provider-doc side of the literature matters because it defines what metadata is actually observable.
+Anthropic documents request IDs, stop reasons, token counting, context-window accounting, and
+prompt caching. OpenAI documents request IDs, pinned snapshots, input-token counting, prompt
+caching, batch processing, and rate-limit headers. Google documents token counting, returned
+usageMetadata , returned modelVersion and responseId , model alias behavior, context caching, and
+batch API semantics. In a provider-agnostic harness, these are not assumptions; they are optional
+observables to capture when available. 12
+The table below summarizes the most useful sources for building a rigorous test program.
+Why it matters for your
+Source Kind Core contribution
+use case
+Essential for probe
+Demonstrates strong
+placement across
+Lost in the Middle Paper positional bias in long
+beginning, middle, and
+contexts. 13
+end.
+Synthetic, configurable long- Best blueprint for single-
+Paper +
+RULER context tasks beyond simple turn length sweeps with
+GitHub repo
+NIAH. 14 random synthetic data.
+3
+
+--- PAGE 4 ---
+Why it matters for your
+Source Kind Core contribution
+use case
+Removes lexical overlap Shows why literal-match
+Paper +
+NoLiMa loophole from needle tests. probes alone are not
+GitHub repo
+15 enough.
+Good model of mixed
+Paper + Hard realistic long-context
+LongBench v2 workloads and harder
+GitHub repo reasoning benchmark. 16
+downstream reasoning.
+Best templates for multi-
+LongMemEval and Papers + Long-horizon chat-memory
+turn and session-memory
+LoCoMo repos/sites evaluation. 17
+stress tests.
+Critical for mixed
+Long-context tool-calling workloads with tool
+LongFuncEval Paper
+evaluation. 18 schemas or long JSON
+catalogs.
+USENIX Minimal-query active
+Good starting point for
+LLMmap paper + fingerprinting for model
+active model-ID probes.
+GitHub repo identification. 19
+Statistical model-equality test Strong basis for claiming
+RUT Paper robust to rerouting/mixing. behavioral mismatch
+20 statistically.
+Knowledge-boundary Excellent for low-cost
+KBF Paper fingerprinting for black-box substitution checks and
+API auditing. 21 mixed-routing detection.
+Continuous drift/change
+Behavioral Best model for ongoing
+detection with energy
+Fingerprints for Paper monitoring rather than
+distance and permutation
+Endpoint Stability one-time audits.
+tests. 22
+Formalizes model Directly aligned with fraud
+Are You Getting What Paper +
+substitution detection in API and service-integrity
+You Pay For? GitHub repo
+services. 23 questions.
+Experimental Designs for Context Probing
+Design principles
+The most reliable probe data is seeded, random, synthetic, and parseable. That recommendation
+aligns with the strongest long-context benchmarks: RULER uses synthetic, configurable examples; U-
+NIAH uses a fictional domain to reduce contamination from pretraining; LongMemEval and LoCoMo
+curate memory-critical facts and updates rather than using arbitrary long documents. For your use case,
+randomly generated sample data is not only acceptable, it is preferable, because it reduces privacy risk,
+makes answer keys exact, and minimizes the chance that success comes from memorization or world
+knowledge instead of actual context use. 24
+4
+
+--- PAGE 5 ---
+Use at least four synthetic data families. The first is high-entropy beacons: UUID-like strings, checksums,
+structured identifiers, and random alphanumeric keys. The second is key-value tables: synthetic
+records, timestamps, balances, tags, and categorical fields. The third is latent-association pairs in the
+NoLiMa style, where the answer is linked indirectly rather than by literal overlap. The fourth is dialogue/
+state data: persona facts, preference changes, reversals, tool outputs, and long catalogs of functions or
+JSON schema fragments. These families jointly cover exact retrieval, semantic retrieval, temporal
+updates, and structured-context handling. 25
+Before sending probes to any endpoint, count tokens using the provider’s native counter if the provider
+offers one; otherwise fall back to a local tokenizer with a known undercount/overcount disclaimer.
+OpenAI and Anthropic both provide counting APIs, and Google documents both token counting and
+returned usage metadata. This is important because tools, schemas, conversation structure, and
+provider-specific formatting tokens make naive local counts unreliable. 26
+Single-turn context probing
+Single-turn probing should be organized as a length-by-position-by-task factorial design. A practical
+setup is to test lengths at 1K, 2K, 4K, 8K, 16K, 32K, 64K, 128K, 256K, and so on until 125–150% of the
+claimed limit, with probe positions at deciles from 5% to 95% of prompt length. At each cell, randomly
+sample from a small menu of task types: exact beacon recall, multi-needle recall, key-value lookup, latent
+association, simple aggregation over distant facts, and contradiction detection between two distant
+passages. This directly addresses the weaknesses documented in Lost in the Middle, RULER, NoLiMa, and
+U-NIAH. 27
+The most informative primary metric for single-turn probes is exact answer recall because the answer
+key is synthetic and unambiguous. Add token retention score for longer outputs by comparing expected
+versus recovered beacon substrings or structured fields; truncation pattern class indicating whether
+failures are uniform, middle-heavy, prefix-loss, or suffix-loss; refusal/error rate; and latency broken into
+queueing, time-to-first-token, and end-to-end time if streaming metadata is available. A model that still
+answers correctly but shows a sharp uptick in MAX_TOKENS , model_context_window_exceeded , or
+unusually high omission rates around middle positions is already signaling effective context stress.
+Anthropic and Google both explicitly document stop/finish reasons relevant to truncation. 28
+For statistical power, treat each length-position-task cell as a Bernoulli process and size it to detect recall
+drops that matter operationally. Using a two-sample approximation with two-sided α = 0.01 and 80%
+power, detecting a drop from 0.95 to 0.80 requires about 113 trials per cell, from 0.90 to 0.75 about 149
+trials, and from 0.85 to 0.70 about 180 trials. In practice, I recommend 120–150 trials per key cell for
+premium endpoints and 60–80 for exploratory sweeps, with Holm-style correction across many lengths
+and positions. Because context failures often appear as smooth curves rather than one-off points, fit a
+generalized additive model or logistic regression over length and normalized position in addition to raw
+per-cell rates.
+Continuous high-intensity multi-turn probing
+Multi-turn probing should emulate the failure modes documented by LongMemEval, LoCoMo, DialSim,
+and LongFuncEval: long-running histories, temporal updates, multi-session reasoning, abstention, and
+tool-context overload. The right design is a scripted synthetic conversation with seeded persona/state
+facts injected gradually. Every N turns, the script introduces updates such as “project code changed
+from X to Y,” “preferred currency changed from SGD to EUR,” or “account balance after transaction is
+Z.” The test questions then ask for current state, previous state, change order, or a comparison between
+early and late facts. This catches both forgetting and failure to honor superseded information. 29
+5
+
+--- PAGE 6 ---
+A good stress configuration has several lanes rather than one monolithic test. One lane uses dense fact
+insertion every turn; one uses bursty insertion with long stretches of irrelevant chatter; one uses tool-
+like turns that inject long JSON objects or API-style outputs; and one uses state-reversal turns where
+earlier facts are deliberately invalidated. Probe at session lengths such as 25, 50, 100, 250, and 500 turns,
+or until the billed input reaches the provider’s claimed range. The key metrics are exact current-state
+recall, superseded-fact leakage rate, abstention correctness, session-level success rate, and the delta
+between cold-start and warmed-history latency. LongMemEval is particularly useful here because it
+frames retrieval, temporal reasoning, knowledge updates, and abstention as separate competencies
+rather than a single accuracy number. 30
+The expected failure signature in multi-turn tests is different from single-turn retrieval. Instead of a clean
+cliff, you often see a phase change: correct answers hold for many turns, then errors cluster around the
+same session lengths, especially after several updates or after long tool outputs. LongFuncEval reports
+substantial degradation as tool catalogs and tool-response lengths grow, while LongMemEval reports
+sizable drops in sustained-interaction memory even for strong systems. That is why production validation
+should test not just “Can it find this token at 128K?” but “Can it keep the right state over 200 turns
+under changing conditions?” 31
+Mixed workloads
+A mixed workload is the most realistic and also the most valuable audit mode. In one request family,
+combine a long synthetic document, a compact instruction block, a function/tool catalog, and a short
+extraction or reasoning task. In another, use long dialogue history plus a retrieval-like tool response plus
+a structured-output schema. LongFuncEval shows clearly that tool catalogs, tool-response length, and
+long multi-turn conversations are separate sources of degradation; LongBench v2 and Loong show that
+realistic long-context use often requires integrating information across many relevant documents, not
+scanning a haystack full of noise. 32
+In mixed workloads, report at least five metrics together: answer recall, tool/schema correctness,
+token retention, latency, and semantic error class. Semantic classes should distinguish omission,
+stale-state use, hallucinated field, wrong tool, malformed structured output, and truncation. Google
+explicitly documents MALFORMED_FUNCTION_CALL as a finish reason; Anthropic documents stop reasons
+and fallbacks; OpenAI documents that tool and schema tokens materially change effective tokenization.
+These observables are valuable because mixed workloads often fail first through malformed structure or
+wrong tool choice rather than cleanly wrong natural-language answers. 33
+The table below compares the three probe families.
+Probe Best for Most important Typical failure
+Main references
+family measuring metrics signature
+Middle-context
+Effective Exact recall,
+trough, sudden cliff RULER, Lost in the
+Single-turn usable context position heatmap,
+near limit, Middle, NoLiMa,
+sweep length and truncation class,
+MAX_TOKENS / U-NIAH. 34
+positional bias latency
+window overflow
+6
+
+--- PAGE 7 ---
+Probe Best for Most important Typical failure
+Main references
+family measuring metrics signature
+Session Current-state recall,
+Stale facts, update
+High- memory, superseded-fact LongMemEval,
+failures, abrupt
+intensity updates, leakage, LoCoMo, DialSim.
+memory decay after
+multi-turn temporal abstention, session 35
+long sessions
+reasoning accuracy
+Answer accuracy, Wrong tool,
+Real-world
+tool correctness, malformed structure, LongFuncEval,
+Mixed agent behavior
+JSON validity, earlier performance LongBench v2,
+workload under context
+latency, omission collapse than single- Loong. 32
+pressure
+rate turn
+Seededrandomdataset
+generator
+Nativetokencountingif
+available
+Executionlane
+Cold-cachesingle-turn Warm-cachesingle-turn High-intensitymulti-turn
+Mixedworkloadsessions
+sweep sweep sessions
+Structuredlogging
+Recallandretention Fingerprintanddrift
+Latencyanderroranalysis
+scoring analysis
+Dashboardandalerting
+This flow follows the benchmarking and operational lessons from long-context evaluation work and from
+official vendor guidance on token counting, caching, and returned usage metadata. 36
+Detecting Provider Switching and Fraud
+Fingerprinting and model-equality testing
+The strongest provider-switching detector is behavioral fingerprinting on fixed prompt sets over time.
+LLMmap showed that carefully designed active probes can identify models with relatively few queries;
+RUT formalized API auditing as a model-equality problem and proposed a rank-based uniformity test;
+KBF used stable numerical recall near the knowledge boundary; and Stability Monitor used sequential
+change detection on fingerprint distributions rather than one-shot classification. In practical terms, that
+7
+
+--- PAGE 8 ---
+means you should maintain a fixed canary set of prompts that is separate from your context probes and
+run it continuously against the endpoint. 37
+The canary set should mix four categories. First, identity-sensitive style probes that elicit characteristic
+formatting, caveats, or refusal behavior. Second, knowledge-boundary prompts around synthetic or
+dated factual edges, following the logic of KBF. Third, structured-behavior probes that require JSON or
+tool-like outputs and therefore expose schema adherence and finish reasons. Fourth, semantic-
+variability probes where you sample multiple responses under controlled randomness and compare the
+resulting distribution, which is the key idea in Stability Monitor. No single prompt pool is enough, but a
+small diverse set often is. 38
+Where you have a certified reference endpoint or local deployment, run a statistical equality test rather
+than eyeballing text. RUT’s framing is useful here: ask whether the target endpoint and the reference
+model are behaviorally indistinguishable on a shared prompt distribution under a realistic query budget.
+If you do not have a certified reference, run self-consistency-over-time instead: compare today’s
+output distribution to the baseline built during a known-good period, using change-point detection on
+lexical or embedding distances, tool-call validity rates, refusal category distributions, and metadata
+frequencies. Stability Monitor’s use of energy distance and aggregated permutation tests is a strong
+template for this mode. 39
+Timing, tokenization, and API-behavior signals
+Latency alone is a weak fraud detector, but it is a good corroborating signal. If prompt content is held
+constant and traffic is normalized, a sudden shift in time-to-first-token, output tokens per second,
+streaming cadence, or cache-hit behavior can suggest infrastructure or routing changes. Official docs
+make clear why this must be interpreted cautiously: OpenAI, Anthropic, and Google all document caching
+features, and OpenAI and Google also document batch or priority modes that can materially alter latency.
+So the correct use of latency is not “this got faster, therefore fraud,” but “latency shows a step-change
+concurrent with behavioral drift.” 40
+Tokenization and encoding artifacts are particularly helpful because they are hard to fake consistently
+across an entire service. Official docs show that counting and formatting tokens differ by provider and by
+feature set. OpenAI explicitly warns that schemas, files, reasoning, and caching alter tokenization;
+Anthropic counts tools, files, documents, and even cache components against the window; Google
+returns prompt, cached-content, and candidate token counts in usage metadata and returns a
+modelVersion field. A provider switch, alias move, hidden gateway, or model replacement can therefore
+show up as changed boundary behavior around token thresholds, changed usage accounting for the
+same payload, altered handling of Unicode edge cases or stop sequences, or shifted structured-output
+validity. 41
+Returned API metadata can be even more direct. OpenAI documents x-request-id and recommends
+logging it; Anthropic documents a unique request-id header and stop reasons; Google documents
+responseId , modelVersion , and structured finish reasons. If a service claims a stable pinned model but
+begins returning a new modelVersion , different stop semantics, different usage counters, or a different
+request-ID pattern because it is now traversing another gateway, that is highly relevant evidence. Some
+providers also explicitly document moving aliases or recommend snapshot pinning; if the contract is for a
+floating alias, backend changes can be legitimate, but if the contract is for a pinned version, the same
+observations are more suspicious. 42
+8
+
+--- PAGE 9 ---
+Fraud indicators and false-positive controls
+Fraud indicators should be treated as a weighted portfolio of evidence. High-value indicators include a
+step-change in model-equality or fingerprint scores, abrupt movement in knowledge-boundary probe
+performance, a bimodal output cluster consistent with mixed routing, new truncation thresholds for the
+same prompt length, unexplained schema or finish-reason changes, persistent latency mode shifts, and
+metadata contradictions between claimed and returned model/version information. KBF is especially
+relevant here because it reports sensitivity even when a relatively small share of traffic is substituted, and
+RUT is relevant because it is explicitly designed to remain robust when providers reroute or mix
+responses. 43
+At the same time, the literature is now explicit that software-only black-box auditing has limits. Are You
+Getting What You Pay For? found that output-only methods can be unreliable against subtle
+substitutions; GhostPrint showed that adversarially trained weaker models can spoof user-side
+fingerprinting; and the broader fingerprinting surveys emphasize that system prompts, RAG,
+quantization, fine-tuning, and deployment wrappers all complicate attribution. So the right operational
+stance is raise alerts on multi-signal inconsistency, not on single-model accusation. 44
+False-positive control is therefore as important as detection. First, maintain known-good control
+endpoints—for example, a direct vendor endpoint if you are testing a reseller or proxy. Second, run time-
+matched A/B controls because global traffic conditions can move latency for unrelated reasons. Third,
+separate cold-cache and warm-cache lanes because caching changes both latency and token
+accounting. Fourth, maintain a calendar of vendor release notes and model deprecations, because
+legitimate alias moves can look like drift. Fifth, control for hidden retrieval or system-prompt changes;
+ACL 2026 work shows that hidden RAG itself can be identified in API-accessible services, which means it is
+a real confound, not a theoretical one. 45
+Model-equality/
+fingerprintscores
+Knowled sc g o e r - e b s oundary No Continuebaselineupdate
+Fixedcanarypromptset Colle la c t t e t n e c x y t, , m us e a t g a e data, Indepe t n ri d g e g n e t re d d e ? tectors No Likelylocal/networkissue
+Metada c ta he c c o k n s sistency Yes Quaran c t o in n e tr a o n ls dre-run Controlendpointsagree?
+Yes end H p ig o h in - t c - o c n h f a id n e g n e c a e lert
+Latencyandcache
+anomalychecks
+This “detect, re-run, and confirm against controls” pattern is much safer than a one-shot accusation,
+especially in light of documented spoofing risks and legitimate backend aliasing. 46
+Programmatic Implementation and Harness Architecture
+A robust harness should have five components: a dataset generator, an adapter layer for whatever API
+you are testing, a runner that supports cold and warm execution lanes, a structured logger, and an
+analysis/alerting layer. This architecture matches both the research tooling in open repositories such as
+RULER, LongMemEval, LLMmap, and the LLM API Audit repo, and the practical CI/CD style encouraged by
+open-source eval tools like Promptfoo. 47
+The logging schema should be richer than most benchmark harnesses use. At minimum, log: endpoint
+label; claimed model; returned model/version where available; request ID / response ID where available;
+provider region if known; test family; RNG seed; exact token counts planned and billed; cache-hit
+9
+
+--- PAGE 10 ---
+counters where available; latency components; status code; stop/finish reason; parsed tool/JSON
+validity; expected answer; recovered answer; exact-match flag; normalized similarity score; and a content
+hash of the prompt. If you later need to defend an integrity finding, that audit trail matters as much as the
+raw accuracy. Provider docs explicitly encourage request-ID logging, and Google/Anthropic document
+response metadata that belongs in these logs. 48
+Pseudocode
+for endpoint in endpoints:
+baseline = load_or_initialize_baseline(endpoint)
+for case in generate_seeded_cases(config):
+payload = build_payload(case)
+if provider_supports_native_count:
+planned_tokens = count_tokens(payload)
+response = adapter.invoke(payload, mode=case.mode)
+record = {
+prompt_hash,
+rng_seed,
+expected_answer,
+response_text,
+returned_model_or_version,
+request_ids,
+usage_metadata,
+latency_metrics,
+stop_or_finish_reason,
+exact_match,
+retention_score,
+schema_valid,
+}
+append_jsonl(record)
+stats = aggregate(records_since_last_run)
+drift = compare_to_baseline(stats, baseline)
+if multi_signal_alert(drift, thresholds):
+rerun_controls()
+if controls_confirm():
+emit_alert()
+This is the right level of abstraction because the API surface is intentionally unspecified. The harness
+depends only on portable observables and fills provider-specific fields opportunistically. That mirrors
+how the black-box auditing papers define the problem: input-output access first, richer metadata only
+when exposed. 49
+10
+
+--- PAGE 11 ---
+Python snippet for seeded dataset generation and execution
+from__future__import annotations
+importabc
+importdataclasses
+importhashlib
+importjson
+importmath
+importos
+importrandom
+importstatistics
+importstring
+importtime
+frompathlibimport Path
+fromtypingimport Any, Iterable
+ALPHABET = string.ascii_uppercase + string.digits
+defsha256_text(text: str) -> str:
+return hashlib.sha256(text.encode("utf-8")).hexdigest()
+defrand_token(rng: random.Random, n: int = 16) -> str:
+return "".join(rng.choice(ALPHABET) for _ in range(n))
+@dataclasses.dataclass
+classProbeCase:
+case_id: str
+task_family: str
+mode: str # cold_single, warm_single, multiturn, mixed
+seed: int
+prompt: str
+expected_answer: str
+claimed_length_tokens: int
+position_fraction: float
+metadata: dict[str, Any]
+classProviderAdapter(abc.ABC):
+"""Provider-agnostic adapter. Fill in invoke() for a real API."""
+@abc.abstractmethod
+definvoke(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
+"""
+Return a dict with at least:
+{
+'text': str,
+'status_code': int,
+'latency_ms': float,
+11
+
+--- PAGE 12 ---
+'request_id': str | None,
+'returned_model': str | None,
+'stop_reason': str | None,
+'usage': dict | None,
+'raw': dict | None,
+}
+"""
+raise NotImplementedError
+defsynthetic_filler(rng: random.Random, approx_tokens: int) -> str:
+# Very rough approximation. Replace with provider-native token counting
+# where available.
+chunks = []
+while len(" ".join(chunks).split()) < approx_tokens:
+chunks.append(
+f"SEG {rand_token(rng,6)} "
+f"KV={rand_token(rng,10)} "
+f"TS={rng.randint(1_700_000_000,1_999_999_999)}"
+)
+return "\n".join(chunks)
+definsert_at_fraction(text: str, needle: str, fraction: float) -> str:
+lines = text.splitlines()
+idx = max(0, min(len(lines), int(round(fraction * len(lines))) - 1))
+lines.insert(idx, needle)
+return "\n".join(lines)
+defmake_single_turn_case(seed: int, target_tokens: int, position_fraction: float) -> ProbeCase:
+rng = random.Random(seed)
+answer = f"ANS-{rand_token(rng,20)}"
+needle = f"IMPORTANT_RECORD secret_code = {answer}"
+filler = synthetic_filler(rng, target_tokens)
+context = insert_at_fraction(filler, needle, position_fraction)
+prompt = (
+"You will answer with ONLY the exact secret_code value.\n"
+"Do not explain. Do not summarize.\n\n"
+f"{context}\n\n"
+"Question: What is the secret_code?"
+)
+return ProbeCase(
+case_id=sha256_text(f"{seed}:{target_tokens}:{position_fraction}")[:16],
+task_family="single_turn_exact_recall",
+mode="cold_single",
+seed=seed,
+prompt=prompt,
+expected_answer=answer,
+claimed_length_tokens=target_tokens,
+12
+
+--- PAGE 13 ---
+position_fraction=position_fraction,
+metadata={"needle": needle},
+)
+defmake_multiturn_cases(seed: int, turns: int) -> list[ProbeCase]:
+rng = random.Random(seed)
+session = []
+current_currency = "SGD"
+project_code = rand_token(rng, 8)
+transcript_parts = []
+for turn in range(1, turns + 1):
+if turn % 17 == 0:
+current_currency = rng.choice(["USD", "EUR", "JPY", "SGD"])
+transcript_parts.append(f"TURN {turn}: currency preference is now
+{current_currency}")
+elif turn % 29 == 0:
+project_code = rand_token(rng, 8)
+transcript_parts.append(f"TURN {turn}: project code changed to {project_code}")
+else:
+transcript_parts.append(
+f"TURN {turn}: note {rand_token(rng,6)} value {rng.randint(1000,9999)}"
+)
+base = "\n".join(transcript_parts)
+q1 = ProbeCase(
+case_id=sha256_text(f"{seed}:currency:{turns}")[:16],
+task_family="multiturn_current_state",
+mode="multiturn",
+seed=seed,
+prompt=base + "\n\nQuestion: Reply with only the current currency preference.",
+expected_answer=current_currency,
+claimed_length_tokens=len(base.split()),
+position_fraction=1.0,
+metadata={},
+)
+q2 = ProbeCase(
+case_id=sha256_text(f"{seed}:project:{turns}")[:16],
+task_family="multiturn_current_state",
+mode="multiturn",
+seed=seed,
+prompt=base + "\n\nQuestion: Reply with only the current project code.",
+expected_answer=project_code,
+claimed_length_tokens=len(base.split()),
+position_fraction=1.0,
+metadata={},
+)
+return [q1, q2]
+13
+
+--- PAGE 14 ---
+defexact_match(pred: str, gold: str) -> bool:
+return pred.strip() == gold.strip()
+defretention_score(pred: str, gold: str) -> float:
+# Longest common subsequence proxy using difflib ratio for portability.
+importdifflib
+return difflib.SequenceMatcher(a=pred.strip(), b=gold.strip()).ratio()
+defrun_cases(adapter: ProviderAdapter, cases: Iterable[ProbeCase], out_path: str | Path) ->
+None:
+out_path = Path(out_path)
+out_path.parent.mkdir(parents=True, exist_ok=True)
+with out_path.open("a", encoding="utf-8") as f:
+for case in cases:
+t0 = time.perf_counter()
+resp = adapter.invoke(case.prompt, mode=case.mode)
+elapsed_ms = (time.perf_counter() - t0) * 1000.0
+text = (resp.get("text") or "").strip()
+record = {
+"case_id": case.case_id,
+"task_family": case.task_family,
+"mode": case.mode,
+"seed": case.seed,
+"prompt_hash": sha256_text(case.prompt),
+"expected_answer": case.expected_answer,
+"response_text": text,
+"exact_match": exact_match(text, case.expected_answer),
+"retention_score": retention_score(text, case.expected_answer),
+"claimed_length_tokens": case.claimed_length_tokens,
+"position_fraction": case.position_fraction,
+"status_code": resp.get("status_code"),
+"latency_ms": resp.get("latency_ms", elapsed_ms),
+"request_id": resp.get("request_id"),
+"returned_model": resp.get("returned_model"),
+"stop_reason": resp.get("stop_reason"),
+"usage": resp.get("usage"),
+"metadata": case.metadata,
+"raw": resp.get("raw"),
+"ts_unix": time.time(),
+}
+f.write(json.dumps(record, ensure_ascii=False) + "\n")
+Python snippet for simple drift scoring and alerting
+from__future__import annotations
+14
+
+--- PAGE 15 ---
+importjson
+importmath
+fromcollectionsimport Counter, defaultdict
+frompathlibimport Path
+fromtypingimport Any
+deftrigram_vector(text: str) -> Counter[str]:
+text = " ".join(text.split())
+return Counter(text[i:i+3] for i in range(max(0, len(text) - 2)))
+defcosine_counter(a: Counter[str], b: Counter[str]) -> float:
+if not a or not b:
+return 0.0
+keys = set(a) | set(b)
+dot = sum(a[k] * b[k] for k in keys)
+na = math.sqrt(sum(v * v for v in a.values()))
+nb = math.sqrt(sum(v * v for v in b.values()))
+return dot / (na * nb) if na and nb else 0.0
+defload_jsonl(path: str | Path) -> list[dict[str, Any]]:
+rows = []
+with Path(path).open("r", encoding="utf-8") as f:
+for line in f:
+rows.append(json.loads(line))
+return rows
+defsummarize(records: list[dict[str, Any]]) -> dict[str, Any]:
+by_family = defaultdict(list)
+for r in records:
+by_family[r["task_family"]].append(r)
+summary = {}
+for family, rows in by_family.items():
+exact = [1.0 if r["exact_match"] else 0.0 for r in rows]
+lat = [float(r["latency_ms"]) for r in rows if r.get("latency_ms") is not None]
+models = Counter(r.get("returned_model") for r in rows if r.get("returned_model"))
+stops = Counter(r.get("stop_reason") for r in rows if r.get("stop_reason"))
+vectors = [trigram_vector(r.get("response_text", "")) for r in rows]
+center = vectors[0] if vectors else Counter()
+sims = [cosine_counter(v, center) for v in vectors] if vectors else [0.0]
+summary[family] = {
+"n": len(rows),
+"exact_mean": sum(exact) / len(exact) if exact else 0.0,
+"latency_p50_ms": sorted(lat)[len(lat)//2] if lat else None,
+"latency_mean_ms": sum(lat) / len(lat) if lat else None,
+"style_similarity_mean": sum(sims) / len(sims) if sims else 0.0,
+15
+
+--- PAGE 16 ---
+"returned_models": dict(models),
+"stop_reasons": dict(stops),
+}
+return summary
+defcompare_to_baseline(current: dict[str, Any], baseline: dict[str, Any]) -> list[str]:
+alerts: list[str] = []
+for family, cur in current.items():
+base = baseline.get(family)
+if not base:
+continue
+if cur["exact_mean"] < base["exact_mean"] - 0.10:
+alerts.append(f"[{family}] recall drop > 10 points")
+if (
+cur["latency_mean_ms"] is not None
+and base.get("latency_mean_ms") is not None
+and cur["latency_mean_ms"] > 1.5 * base["latency_mean_ms"]
+):
+alerts.append(f"[{family}] latency mean > 1.5x baseline")
+if cur["style_similarity_mean"] < base["style_similarity_mean"] - 0.10:
+alerts.append(f"[{family}] response-style drift")
+if cur["returned_models"] != base["returned_models"]:
+alerts.append(f"[{family}] returned_model changed")
+if cur["stop_reasons"] != base["stop_reasons"]:
+alerts.append(f"[{family}] stop/finish reason distribution changed")
+return alerts
+These snippets are intentionally conservative. They avoid provider assumptions, keep the answer keys
+exact, and expose the observables that matter most for context verification and drift detection. In
+production, I would add native token counters, streaming capture, richer structured-output validators,
+and a statistical change detector based on energy distance or permutation testing following Stability
+Monitor. 22
+Deployment and cost-throughput tradeoffs
+In deployment, create separate benchmark lanes rather than one blended stream: an integrity lane, a
+single-turn context lane, a multi-turn memory lane, and a mixed-workload lane. Route them through a
+common scheduler that respects provider rate limits and optionally supports batch mode for non-
+latency-sensitive jobs. OpenAI and Google both document batch APIs with lower cost for asynchronous
+work, while Anthropic documents batch processing and notes that cache hits are best-effort in
+concurrent batch settings. That makes batch useful for accuracy sweeps, but not for latency baselining.
+50
+Caching must also be isolated. Official docs from all three major vendor stacks show that caching can
+materially change both cost and latency; OpenAI explicitly documents large latency and cost reductions
+16
+
+--- PAGE 17 ---
+from prompt caching, and Anthropic and Google document similar mechanisms. Therefore store
+benchmark results with a cache_mode tag and never compare cold and warm runs in the same baseline
+distribution. 51
+Evaluation Plan, Limitations, and Prioritized References
+The evaluation plan should proceed in three phases. First, establish a known-good baseline under
+controlled conditions, ideally against a direct vendor endpoint or a locally hosted reference when
+possible. Second, run length sweeps and session sweeps to map actual capability curves, not just pass/
+fail outcomes. Third, enable continuous canary monitoring with fixed fingerprint prompts and drift
+thresholds. In comparing results, do not ask only whether an endpoint “works” at its claimed context
+size; ask at what length each workload drops below your operational threshold, such as 95% exact recall
+for key-value extraction or 99% schema validity for tool routing. That framing is more useful than raw
+maximum length and aligns with the endpoint-stability literature. 52
+The most informative visualizations are straightforward. Use a heatmap of recall by normalized position
+and prompt length for single-turn probes; a session timeline for multi-turn tests showing current-state
+recall, stale-state leakage, and latency; a control chart for fingerprint distance and change-point p-
+values; a bimodal histogram or kernel density plot for latency under suspected mixed routing; and a
+waterfall chart of failure categories in mixed workloads. Long-context papers repeatedly show that
+position and workload interact strongly, so two-dimensional plots are much more informative than one-
+dimensional averages. 53
+Expected results, if the endpoint is honest and technically strong, are usually a gradual degradation
+pattern rather than a clean cliff: early single-turn tasks stay strong, exact multi-needle or latent-
+association tasks degrade first, mixed workloads degrade earlier than plain recall, and multi-turn update
+handling fails before brute-force token recall does. If the endpoint is being silently rerouted or replaced,
+the signature is more often a step-change or bimodality: output style clusters split, returned metadata
+shifts, latency distribution changes mode, knowledge-boundary prompts behave differently, and the
+canary fingerprint diverges from baseline. KBF’s low-rate mixed-routing results and Stability Monitor’s
+endpoint-drift framing are especially useful expectations for this scenario. 54
+There are, however, important limitations. First, black-box auditing provides statistical evidence, not
+cryptographic proof. The model-substitution and spoofing papers are explicit that subtle or adaptive
+attacks can evade output-only verification, and they argue that stronger guarantees may require
+hardware attestation or trusted execution approaches that ordinary API users do not control. Second, the
+“model” is often not the whole system: hidden RAG, system prompts, tool wrappers, safety classifiers,
+or inference-stack changes can alter behavior without changing the base weights. Third, moving aliases
+and preview models can legitimately change behavior over time. Any report to a provider or customer
+should therefore distinguish behavioral inconsistency from proven fraud. 55
+Ethically and legally, the safest approach is to use only synthetic, non-personal, non-copyright-sensitive
+test data; stay within published rate limits and terms; avoid prompts designed to trigger prohibited
+behavior; and minimize retention of response bodies if they may contain provider-side metadata or
+sensitive echoes. The model-substitution paper explicitly notes that its experiments stay within provider
+terms and avoid human-subject data, and official docs from major vendors emphasize rate limiting,
+request tracking, and operational discipline. Those same principles apply to an enterprise audit harness.
+56
+17
+
+--- PAGE 18 ---
+Prioritized references
+The references below are the most useful first reads for the exact problem you asked about.
+• RULER: What’s the Real Context Size of Your Long-Context Language Models? Best starting
+point for synthetic long-context probing design. Paper and code. 14
+• Lost in the Middle: How Language Models Use Long Contexts. Canonical source on positional
+bias. 13
+• NoLiMa: Long-Context Evaluation Beyond Literal Matching. Best source on why literal-overlap
+probes overestimate long-context capability. Paper and repo. 15
+• LongBench v2. Strongest realistic long-context reasoning benchmark in the current public
+literature. Paper and repo/site. 57
+• LongMemEval and LoCoMo. Best sources for sustained multi-turn memory and update handling.
+17
+• LongFuncEval. Best source for mixed workloads with long tool catalogs and long tool responses.
+18
+• LLMmap. Practical active fingerprinting reference with code. 19
+• Auditing Black-Box LLM APIs with a Rank-Based Uniformity Test. Strong statistical framing for
+equality testing under query budgets. 20
+• Are You Getting What You Pay For? Auditing Model Substitution in LLM APIs. Directly targets
+service-integrity and substitution fraud; includes public code. 23
+• KBF: Knowledge Boundary as Fingerprint for Language Model and Black-Box API Auditing.
+Particularly relevant for low-cost detection of substitutions and mixed routing. 21
+• Behavioral Fingerprints for LLM Endpoint Stability and Identity. Best reference for continuous
+monitoring and change detection. 22
+• Your “Pro” LLM Subscription May Actually Be “Free”. Important cautionary 2026 result
+showing fingerprint spoofing risk. 58
+• Provider documentation on counting, caching, request IDs, and model versioning: Anthropic
+docs, OpenAI docs, and Gemini docs. These are essential for instrumenting a real harness
+correctly. 59
+1 3 6 14 34 36 RULER: What's the Real Context Size of Your Long- ...
+https://arxiv.org/abs/2404.06654?_hsenc=p2ANqtz-9o2Recq645Sh94dkQERF-s-
+TPwoF7fmy7Bw20yk8Bg7em33UUSAF9nnQ3hCwDYUj56R_zz&utm_campaign=The+Batch&utm_medium=email&utm_source=chatgpt.com
+2 10 19 37 LLMmap: Fingerprinting for Large Language Models
+https://www.usenix.org/conference/usenixsecurity25/presentation/pasquini?utm_source=chatgpt.com
+4 15 25 NoLiMa: Long-Context Evaluation Beyond Literal Matching
+https://arxiv.org/abs/2502.05167?utm_source=chatgpt.com
+5 Context windows - Claude Platform Docs
+https://docs.anthropic.com/en/docs/build-with-claude/context-windows
+7 28 Stop reasons and fallback - Claude Platform Docs
+https://docs.anthropic.com/en/api/handling-stop-reasons
+8 Prompt caching - Claude Platform Docs
+https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching?utm_source=chatgpt.com
+9 LongBench: A Bilingual, Multitask Benchmark for Long Context Understanding
+https://arxiv.org/abs/2308.14508?utm_source=chatgpt.com
+18
+
+--- PAGE 19 ---
+11 A Comprehensive Survey on Long Context Language Modeling
+https://arxiv.org/abs/2503.17407?utm_source=chatgpt.com
+12 Errors - Claude Platform Docs
+https://docs.anthropic.com/en/api/errors
+13 27 53 Lost in the Middle: How Language Models Use Long ...
+https://teapot123.github.io/files/CSE_5610_Fall25/Lecture_12_Long_Context.pdf?utm_source=chatgpt.com
+16 57 LongBench v2: Towards Deeper Understanding and ...
+https://aclanthology.org/2025.acl-long.183/?utm_source=chatgpt.com
+17 29 30 35 LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory
+https://arxiv.org/abs/2410.10813?utm_source=chatgpt.com
+18 31 32 LongFuncEval: Measuring the effectiveness of long context models for function calling
+https://arxiv.org/abs/2505.10570?utm_source=chatgpt.com
+20 39 Auditing Black-Box LLM APIs with a Rank-Based Uniformity Test
+https://arxiv.org/abs/2506.06975?utm_source=chatgpt.com
+21 38 43 54 KBF: Knowledge Boundary as Fingerprint for Language Model and Black-Box API Auditing
+https://arxiv.org/abs/2605.29524?utm_source=chatgpt.com
+22 52 Behavioral Fingerprints for LLM Endpoint Stability and Identity
+https://arxiv.org/abs/2603.19022?utm_source=chatgpt.com
+23 44 49 55 Are You Getting What You Pay For? Auditing Model Substitution in LLM APIs
+https://arxiv.org/abs/2504.04715?utm_source=chatgpt.com
+24 47 NVIDIA/RULER: This repo contains the source code for ...
+https://github.com/NVIDIA/RULER?utm_source=chatgpt.com
+26 41 Counting tokens | OpenAI API
+https://developers.openai.com/api/docs/guides/token-counting
+33 Generating content | Gemini API | Google AI for Developers
+https://ai.google.dev/api/generate-content
+40 45 51 Prompt caching | OpenAI API
+https://developers.openai.com/api/docs/guides/prompt-caching?utm_source=chatgpt.com
+42 48 API Overview | OpenAI API Reference
+https://developers.openai.com/api/reference/overview/
+46 58 Your "Pro" LLM Subscription May Actually Be "Free": Exposing Fingerprint Spoofing Risks in LLM
+Inference Services
+https://arxiv.org/abs/2606.16100?utm_source=chatgpt.com
+50 Batch API
+https://developers.openai.com/api/docs/guides/batch?utm_source=chatgpt.com
+56 Are You Getting What You Pay For? Auditing Model ...
+https://arxiv.org/html/2504.04715v2?utm_source=chatgpt.com
+59 Token counting - Claude Platform Docs
+https://docs.anthropic.com/en/docs/build-with-claude/token-counting
+19

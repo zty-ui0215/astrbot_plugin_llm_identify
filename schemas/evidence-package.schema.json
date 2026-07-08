@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "evidence-package.schema.json",
+  "title": "LLM Identify trusted reference evidence package",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "sample_type",
+    "verification_status",
+    "privacy_notice",
+    "task_ref",
+    "endpoint",
+    "model",
+    "versions",
+    "time",
+    "scores",
+    "protocol_features",
+    "timing_statistics",
+    "token_cadence_statistics",
+    "probe_ids",
+    "capability_scores",
+    "fingerprint_vector",
+    "maintainer_notes"
+  ],
+  "properties": {
+    "schema_version": {"const": "trusted-reference-candidate/v1"},
+    "sample_type": {"const": "trusted_reference_candidate"},
+    "verification_status": {"enum": ["maintainer_review_required", "promote_candidate", "quarantine", "reject"]},
+    "privacy_notice": {"type": "string", "minLength": 20},
+    "task_ref": {"type": "string", "minLength": 8},
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "official_host", "matched_path"],
+      "properties": {
+        "provider": {"type": "string", "enum": ["openai", "anthropic", "google"]},
+        "official_host": {"type": "string", "minLength": 3},
+        "matched_path": {"type": "string", "minLength": 1}
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claimed_by_official_endpoint"],
+      "properties": {"claimed_by_official_endpoint": {"type": "string", "minLength": 1}}
+    },
+    "versions": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["plugin", "probe_pack"],
+      "properties": {
+        "plugin": {"type": "string", "minLength": 1},
+        "probe_pack": {"type": "string", "minLength": 1},
+        "sanitizer": {"type": "string"}
+      }
+    },
+    "time": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["created_at_bucket_utc"],
+      "properties": {"created_at_bucket_utc": {"type": "string", "minLength": 4}}
+    },
+    "scores": {"type": "object", "additionalProperties": true},
+    "protocol_features": {"type": "object", "additionalProperties": true},
+    "timing_statistics": {"type": "object", "additionalProperties": true},
+    "token_cadence_statistics": {"type": "object", "additionalProperties": true},
+    "probe_ids": {"type": "array", "items": {"type": "string"}},
+    "capability_scores": {"type": "object", "additionalProperties": true},
+    "fingerprint_vector": {"type": "object", "additionalProperties": true},
+    "maintainer_notes": {"type": "string"}
+  }
+}

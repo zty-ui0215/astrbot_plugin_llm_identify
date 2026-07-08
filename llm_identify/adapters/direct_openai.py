@@ -8,6 +8,7 @@ import urllib.request
 from typing import Any
 
 from ..models import ModelReply, TokenSnapshot
+from .trace_normalization import normalize_reply_meta, normalize_usage
 
 
 class DirectOpenAICompatibleAdapter:
@@ -47,10 +48,7 @@ class DirectOpenAICompatibleAdapter:
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 raw = response.read().decode("utf-8", errors="replace")
-                transport_meta = {
-                    "http_status": response.status,
-                    "headers": _safe_headers(response.headers.items()),
-                }
+                transport_meta = {"http_status": response.status, "headers": _safe_headers(response.headers.items())}
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"Direct OpenAI-compatible request failed: HTTP {exc.code}: {_shorten(detail)}") from exc
@@ -142,6 +140,7 @@ class DirectOpenAICompatibleAdapter:
         if usage:
             meta["raw_usage"] = usage
             meta["raw_usage_type"] = "dict"
+        meta = normalize_reply_meta(meta)
         return ModelReply(
             text="".join(text_parts),
             usage=_usage_from_raw(usage),
@@ -150,8 +149,50 @@ class DirectOpenAICompatibleAdapter:
             meta=meta,
         )
 
+
+    async def count_tokens(self, prompt: str) -> dict[str, Any]:
+        return await asyncio.to_thread(self._count_tokens_sync, prompt)
+
+    def _count_tokens_sync(self, prompt: str) -> dict[str, Any]:
+        payload = {"model": self.model, "input": prompt}
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(
+            self._input_tokens_url(),
+            data=body,
+            headers=self._headers(),
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                raw = response.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Direct token count failed: HTTP {exc.code}: {_shorten(detail)}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"Direct token count failed: {exc.reason}") from exc
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Direct token count response is not JSON: {_shorten(raw)}") from exc
+        if not isinstance(parsed, dict):
+            raise RuntimeError("Direct token count response JSON is not an object")
+        input_tokens = _read_count(parsed, "input_tokens", "tokens", "total_tokens", "prompt_tokens")
+        usage = parsed.get("usage") if isinstance(parsed.get("usage"), dict) else {}
+        if input_tokens is None:
+            input_tokens = _read_count(usage, "input_tokens", "prompt_tokens", "total_tokens")
+        return {
+            "provider": "openai_compatible",
+            "endpoint": "/responses/input_tokens",
+            "input_tokens": input_tokens,
+            "total_tokens": _read_count(parsed, "total_tokens") or _read_count(usage, "total_tokens") or input_tokens,
+            "raw_keys": sorted(str(key) for key in parsed.keys()),
+        }
+
     def _chat_completions_url(self) -> str:
         return urllib.parse.urljoin(self.base_url.rstrip("/") + "/", "chat/completions")
+
+    def _input_tokens_url(self) -> str:
+        return urllib.parse.urljoin(self.base_url.rstrip("/") + "/", "responses/input_tokens")
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -162,6 +203,9 @@ class DirectOpenAICompatibleAdapter:
 
 
 def _reply_from_chat_completion(data: dict[str, Any], *, raw_type: str, transport_meta: dict[str, Any]) -> ModelReply:
+    if str(data.get("object") or "") == "response":
+        return _reply_from_response_object(data, raw_type="OpenAIResponseDirect", transport_meta=transport_meta)
+
     choices = data.get("choices")
     first_choice = choices[0] if isinstance(choices, list) and choices else {}
     message = first_choice.get("message") if isinstance(first_choice, dict) else {}
@@ -171,6 +215,7 @@ def _reply_from_chat_completion(data: dict[str, Any], *, raw_type: str, transpor
     usage = data.get("usage") if isinstance(data.get("usage"), dict) else None
     meta = _meta_from_chat_completion(data)
     meta.update(transport_meta)
+    meta = normalize_reply_meta(meta)
     return ModelReply(
         text=text,
         usage=_usage_from_raw(usage),
@@ -180,9 +225,23 @@ def _reply_from_chat_completion(data: dict[str, Any], *, raw_type: str, transpor
     )
 
 
+def _reply_from_response_object(data: dict[str, Any], *, raw_type: str, transport_meta: dict[str, Any]) -> ModelReply:
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else None
+    meta = _meta_from_response_object(data)
+    meta.update(transport_meta)
+    meta = normalize_reply_meta(meta)
+    return ModelReply(
+        text=_text_from_response_object(data),
+        usage=_usage_from_raw(usage),
+        response_id=str(data.get("id")) if data.get("id") else None,
+        raw_type=raw_type,
+        meta=meta,
+    )
+
+
 def _meta_from_chat_completion(data: dict[str, Any]) -> dict[str, Any]:
     meta: dict[str, Any] = {"response_type": "direct_openai", "raw_type": "OpenAIChatCompletionDirect"}
-    for key in ("id", "model", "object", "created"):
+    for key in ("id", "model", "object", "created", "system_fingerprint"):
         if data.get(key) is not None:
             meta[key] = str(data[key])
     choices = data.get("choices")
@@ -197,27 +256,50 @@ def _meta_from_chat_completion(data: dict[str, Any]) -> dict[str, Any]:
     return meta
 
 
+def _meta_from_response_object(data: dict[str, Any]) -> dict[str, Any]:
+    meta: dict[str, Any] = {"response_type": "direct_openai_response", "raw_type": "OpenAIResponseDirect"}
+    for key in ("id", "model", "object", "created_at", "status"):
+        if data.get(key) is not None:
+            meta[key] = str(data[key])
+    output = data.get("output")
+    if isinstance(output, list):
+        meta["output_count"] = len(output)
+        for item in output:
+            if isinstance(item, dict) and item.get("type") == "message":
+                if item.get("role") is not None:
+                    meta["role"] = str(item["role"])
+                if item.get("status") is not None:
+                    meta["message_status"] = str(item["status"])
+                break
+    usage = data.get("usage")
+    if isinstance(usage, dict):
+        meta["raw_usage"] = usage
+        meta["raw_usage_type"] = "dict"
+    return meta
+
+
+def _text_from_response_object(data: dict[str, Any]) -> str:
+    parts: list[str] = []
+    output = data.get("output")
+    if not isinstance(output, list):
+        return ""
+    for item in output:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "output_text" and isinstance(block.get("text"), str):
+                parts.append(block["text"])
+    return "".join(parts)
+
+
 def _usage_from_raw(raw_usage: dict[str, Any] | None) -> TokenSnapshot | None:
     if not raw_usage:
         return None
-
-    def read(*names: str) -> int | None:
-        for name in names:
-            value = raw_usage.get(name)
-            if value is None:
-                continue
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                return None
-        return None
-
-    input_tokens = read("prompt_tokens", "input_tokens", "promptTokenCount")
-    output_tokens = read("completion_tokens", "output_tokens", "candidatesTokenCount")
-    total_tokens = read("total_tokens", "totalTokenCount")
-    if total_tokens is None and input_tokens is not None and output_tokens is not None:
-        total_tokens = input_tokens + output_tokens
-    return TokenSnapshot(input=input_tokens, output=output_tokens, total=total_tokens)
+    normalized, _ = normalize_usage(raw_usage)
+    return normalized
 
 
 def _normalize_base_url(value: str) -> str:
@@ -231,12 +313,22 @@ def _normalize_base_url(value: str) -> str:
         url += "/v1"
     return url
 
+def _read_count(raw: dict[str, Any], *names: str) -> int | None:
+    for name in names:
+        value = raw.get(name)
+        if value is None:
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return None
 
 def _safe_headers(items: Any) -> dict[str, str]:
     safe: dict[str, str] = {}
     for key, value in items:
         lowered = str(key).lower()
-        if lowered in {"authorization", "cookie", "set-cookie"}:
+        if lowered in {"authorization", "cookie", "set-cookie", "x-api-key", "api-key", "proxy-authorization"}:
             continue
         safe[str(key)] = str(value)
     return safe

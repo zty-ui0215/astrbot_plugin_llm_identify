@@ -1,0 +1,863 @@
+
+
+--- PAGE 1 ---
+Community-Driven Trusted Reference Corpus for
+LLM Fingerprinting on GitHub
+Executive summary
+A community-driven Trusted Reference Corpus for LLM fingerprinting is feasible, but only if it is designed
+as a privacy-first, staged system rather than a simple “upload all probe results to GitHub” pipeline.
+GitHub is well suited to act as the public coordination and publication layer because it supports issue
+forms, labels, milestones, CODEOWNERS, branch protections, rulesets, pull requests, and Actions-based
+validation. However, GitHub is a poor place for raw evidence in public repositories because uploaded files
+on public issues and pull requests are accessible without authentication, and Actions artifacts are
+temporary by default. In practice, the safest design is a two-tier repository model: a private intake/
+quarantine lane for raw or semi-raw submissions, and a public canonical corpus for sanitized
+manifests, approved JSONL reference records, schemas, probe-pack definitions, and release notes. 1
+The most reliable path is to treat “trusted reference” as a governed label, not as a property of any
+single upload. GitHub issue forms can collect structured metadata, PRs can carry candidate dataset rows,
+and Actions can validate schema, sanitizer output, and repo policy compliance. But a submission should
+become “trusted” only after maintainers confirm that it comes from an official endpoint, passes
+redaction checks, meets minimum probe and repeat thresholds, and is reproducible enough to survive
+later provider changes. For official-endpoint detection, a practical starter allowlist can be built from first-
+party provider documentation: OpenAI’s public API under api.openai.com with /v1/* resources,
+Anthropic’s native API at https://api.anthropic.com and OpenAI-compatible base URL https://
+api.anthropic.com/v1/ , and Google’s Gemini service endpoint https://
+generativelanguage.googleapis.com including its OpenAI-compat layer under /v1beta/openai/ . 2
+For plugin developers, the right architecture is a light core plus optional contribution module. The core
+should only run probes and score evidence locally. Optional modules can add consent UI, sanitization,
+export, and GitHub submission. This keeps the detector lightweight for ordinary users while allowing
+contributors to strengthen the corpus over time. From a governance standpoint, the corpus should
+maintain separate versioning for schema, probe packs, sanitizer, and accepted references, and it should
+classify accepted records by trust tier rather than merging all rows into one flat dataset. 3
+From a cost perspective, the main cash drivers are not GitHub itself but API sampling, validation
+compute, and human review. Current model pricing makes an MVP tractable if you rely on cheap direct-
+provider calls, keep probes short, and delay expensive secondary verification until a submission clears
+basic checks. OpenAI, Anthropic, and Google all expose enough direct documentation on pricing, rate
+limits, and data controls to support a disciplined rollout. The most robust funding model is a small
+“reference alliance” of maintainers, direct API customers, and plugin authors that shares curation labor
+and optionally subsidizes trusted official-endpoint refresh runs. 4
+Feasibility analysis
+Technically, GitHub already provides most of the control-plane features needed for a corpus program.
+Issue forms can enforce structured submissions and can pre-apply labels and projects; issues can be
+1
+
+--- PAGE 2 ---
+opened from URL query parameters, which makes browser-based zero-token submission practical; labels
+and milestones can structure triage; CODEOWNERS and branch protection can require review by
+designated maintainers; rulesets can layer repository policies; and Actions can validate artifacts and PR
+content before merge. That makes GitHub a good fit for intake orchestration and canonical publication,
+even though it is not a great long-term store for raw uploads. 5
+The primary legal and privacy constraint is visibility. In a public repository, attached files on issues and
+pull requests can be accessed without authentication, so any design that invites contributors to upload
+raw prompts, raw model outputs, screenshots, or logs to a public issue form is unsafe by default. GitHub
+also maintains formal DMCA and private-information removal processes, which means maintainers
+should assume that accidental sensitive uploads and rights complaints are operational realities, not edge
+cases. A compliant corpus program therefore needs both preventive controls and a takedown response
+process. 6
+Privacy feasibility depends on treating submissions as de-identified telemetry, not as chat transcripts.
+NIST defines PII broadly as information that can directly or indirectly identify an individual, and its de-
+identification guidance emphasizes removing enough identifying information that there is no reasonable
+basis to believe the remaining data can identify a person. The UK ICO likewise distinguishes
+anonymisation from pseudonymisation and stresses that identifiability can arise from combinations of
+fields, not just explicit names. For this use case, that means raw prompts, raw outputs, file names, IP
+addresses, API keys, organization IDs, screenshots, and hidden prompt leaks should never be published.
+Only derived features, hashes, buckets, and coarse metadata belong in the public corpus. 7
+Scalability is favorable if the system distinguishes between submission volume and trusted-reference
+volume. Intake can scale horizontally as cheap issue or PR metadata, while expensive validation steps
+are only run on a smaller set of candidates. GitHub Actions artifacts are useful for temporary quarantine
+and validator output, but GitHub stores artifacts and logs for 90 days by default, so artifacts should be
+treated as short-lived review evidence rather than the permanent corpus. The permanent system of
+record should be versioned JSONL and schema files committed to the repository, with release snapshots
+for reproducibility. 8
+Provider policies also support the design, as long as the plugin does not exfiltrate secrets and the corpus
+avoids storing provider-side customer content. OpenAI states that API data is not used for training unless
+customers explicitly opt in, and abuse monitoring logs are retained for up to 30 days by default unless
+customers have approved alternative controls. Anthropic offers a zero-data-retention arrangement for
+eligible API features and states that retained data is never used for model training without express
+permission. Google documents that abuse-monitoring logs for Gemini API misuse detection are retained
+for 55 days, and its Gemini Developer API ZDR page explains both the training restriction for paid services
+and the circumstances under which state or tool-related storage still occurs. These policies do not
+eliminate your own privacy obligations, but they are compatible with a local-sanitize-then-upload model.
+9
+Reference workflow
+The end-to-end workflow should be staged so that trust is added progressively. First, the plugin detects
+whether the configured base URL matches an allowlisted official endpoint. Second, it asks the user for
+consent using a local UI that clearly states what will and will not be uploaded. Third, it runs a bounded
+probe pack locally, collects timing and protocol evidence, and generates derived output features without
+retaining the raw textual payload in the export bundle. Fourth, it runs the sanitizer, produces a preview,
+and shows the user the exact fields that will leave the machine. Fifth, it submits either a browser-opened
+2
+
+--- PAGE 3 ---
+issue form, a signed dataset PR, or a private-intake upload. Sixth, GitHub Actions validate structure and
+policy compliance. Seventh, maintainers review and either reject, quarantine, or promote the record into
+the trusted corpus. 10
+Endpointconfiguredin
+plugin
+Officialendpointallowlist
+match?
+No Yes
+Runlocalprobesonly ShowconsentUI
+Executeprobepacklocally
+Sanitizeandderive
+evidencepackage
+Localpreviewanduser
+confirm
+Submissionmode
+Browserissueform DatasetPR Privateintake
+OpenprefilledGitHub CreatecandidateJSONL Uploadtoprivatereview
+issue commitorforkPR repo
+GitHubActionsvalidation
+Maintainertriage
+Reject Quarantine Accept
+Closewithreason Needsfollow-upevidence Mergeint r o e t le ru as s e tedcorpus
+The official-endpoint classifier should be conservative. A recommended starting ruleset is to require
+exact hostname matches plus a known API path family. For OpenAI, accept api.openai.com and the
+documented /v1/* family; for OpenAI mTLS customers, also accept mtls.api.openai.com and mtls-
+eu.api.openai.com when explicitly configured. For Anthropic, accept api.anthropic.com , with native
+traffic expecting POST /v1/messages and related endpoints, and accept its OpenAI-compatible base URL
+https://api.anthropic.com/v1/ only if the configured model IDs are Anthropic models. For Google,
+accept generativelanguage.googleapis.com , with both native Gemini methods relative to the
+documented service endpoint and the OpenAI-compatible path family /v1beta/openai/ . If the
+configured URL points to Azure, Bedrock, a self-hosted proxy, or an unknown domain, the result may still
+be useful for community comparison but it should not be eligible for “official reference” tiering. 11
+The evidence package should prefer derived, durable features over payload content. Good fields
+include endpoint class, provider, model string, request shape, response-header presence, SSE event
+family, request/response size buckets, token-count estimates, TTFT bucket, per-token interval histogram,
+output length, structural markers such as JSON validity or markdown ratio, and stable hashes of
+normalized response structure. Avoid storing the raw prompt, raw output, raw headers, or auth-bearing
+fields. For safety, the exported bundle should also include a machine-readable sanitization report stating
+which redaction rules fired and whether any field was dropped. This is aligned with de-identification
+guidance from NIST and the ICO and materially lowers the chance that GitHub becomes a public leak
+point. 12
+3
+
+--- PAGE 4 ---
+A recommended consent flow is one screen, one summary, one preview. The first screen explains
+purpose, public/private destination, and what never leaves the device. The second screen shows the
+exact sanitized JSON diff. The final action offers three buttons: “Submit as issue,” “Export locally,” or
+“Cancel.” This respects the provider guidance that API keys must not be exposed in client-side contexts
+and keeps submission optional. 13
+GitHub implementation
+GitHub should be used in three lanes, not one. The first lane is a low-friction public issue-form lane for
+metadata-only submissions and browser-opened intake. The second lane is a PR lane for candidate
+dataset rows in JSONL once a contributor or bot has already sanitized and normalized the evidence
+package. The third lane is a private-intake lane for richer attachments or temporary quarantine artifacts,
+with only accepted sanitized records mirrored into the public corpus. This split is justified by GitHub’s
+public upload visibility rules and by the fact that issue forms, while very useful, are still documented as
+public preview. 14
+The public repository should store schemas, probe-pack manifests, accepted references, derived
+benchmark summaries, and release snapshots. The private intake repository, if you choose to run one,
+should store raw candidate uploads, sanitizer logs, and temporary review artifacts. GitHub Actions
+artifacts are useful for passing sanitized validator results between jobs and for preserving review
+evidence temporarily, but because artifacts are retained for 90 days by default, they should not be the
+canonical source of truth. 8
+A practical repository layout is shown below. This is a design recommendation rather than a GitHub
+requirement.
+trusted-reference-corpus/
+.github/
+ISSUE_TEMPLATE/
+official_reference_submission.yml
+candidate_submission.yml
+config.yml
+workflows/
+validate-issue.yml
+validate-pr.yml
+release-corpus.yml
+CODEOWNERS
+docs/
+governance.md
+privacy.md
+reviewer-checklist.md
+contributor-guide.md
+schemas/
+evidence-package.schema.json
+corpus-row.schema.json
+sanitizer-report.schema.json
+probe-packs/
+pack-core-v1/
+pack-official-min-v1/
+pack-routing-v1/
+4
+
+--- PAGE 5 ---
+submissions/
+public-index/
+2026-07.jsonl
+references/
+trusted/
+openai/
+anthropic/
+google/
+candidate/
+quarantined/
+deprecated/
+tools/
+validators/
+normalizers/
+dedupe/
+releases/
+corpus-2026-07/
+The label taxonomy should separate workflow state from trust state. Suggested workflow labels are
+intake , needs-sanitization-proof , schema-failed , needs-review , accepted , rejected , and
+stale . Suggested trust labels are tier:t0-official , tier:t1-reproduced , tier:t2-community ,
+tier:t3-adversarial , and provider:openai|anthropic|google . Labels are repository-scoped and
+GitHub supplies default labels for standard workflows, so you can augment rather than replace the built-
+ins. Milestones can group monthly corpus releases or provider refresh waves. 15
+Branch governance should use CODEOWNERS plus either branch protection or rulesets. CODEOWNERS
+lets you define responsible reviewers for schemas, workflows, references, and governance docs, and
+GitHub can require code-owner approval before merge. Rulesets are particularly useful because multiple
+rulesets can apply at the same time and anyone with read access can inspect active rulesets, which
+improves auditability for an open corpus project. Protected branches remain useful for requiring status
+checks and reviews on the default branch. 16
+For automated submission, GitHub Apps are usually the cleaner long-term choice than OAuth apps or
+classic PATs. GitHub documents that Apps can request separate permissions for issues and pull requests
+without broad repository-content access, which maps well to a corpus workflow where many operations
+are triage-only. If you do use API credentials, GitHub recommends fine-grained PATs over classic tokens
+and advises using minimum permissions with expiration. 17
+The best no-token submission path is still the browser. GitHub supports opening issues from URL query
+parameters, and issue forms can pre-apply title, labels, assignees, and project routing. That means your
+plugin can submit by opening a user-confirmed browser tab instead of holding a GitHub token at all. 18
+Sample Issue Form YAML
+This sample is intentionally public-safe: it does not use file uploads. GitHub issue forms do support file
+uploads, but those should be reserved for a private intake repository or for bundles that are provably
+sanitized and safe to publish. 19
+5
+
+--- PAGE 6 ---
+name:Official Reference Submission
+description:Submit a sanitized evidence package from an official provider endpoint.
+title:"[reference]"
+labels:["intake","needs-review"]
+body:
+-type:markdown
+attributes:
+value:|
+Submit only sanitized evidence. Do not include raw prompts, raw outputs, API keys, screenshots, or
+files containing personal or confidential data.
+-type:dropdown
+id:provider
+attributes:
+label:Provider
+options:
+-OpenAI
+-Anthropic
+-Google Gemini
+validations:
+required:true
+-type:input
+id:endpoint
+attributes:
+label:Base URL
+placeholder:https://api.openai.com/v1
+description:Must be the configured endpoint used during probing.
+validations:
+required:true
+-type:input
+id:model_id
+attributes:
+label:Model identifier
+placeholder:gpt-5.4-mini
+validations:
+required:true
+-type:textarea
+id:manifest
+attributes:
+label:Sanitized manifest JSON
+description:Paste the compact manifest only. No raw prompts or raw outputs.
+render:json
+validations:
+required:true
+-type:checkboxes
+6
+
+--- PAGE 7 ---
+id:attestations
+attributes:
+label:Submitter attestations
+options:
+-label:I confirm this submission contains no API keys, tokens, cookies, or Authorization headers.
+required:true
+-label:I confirm this submission contains no raw prompt text, raw model output text,
+screenshots, or uploaded files.
+required:true
+-label:I confirm the endpoint is a first-party provider endpoint, not a third-party gateway.
+required:true
+Sample GitHub Actions validation workflow
+This workflow illustrates the public PR lane. In production, pin actions to full commit SHAs because
+GitHub explicitly recommends that practice for immutable and safer workflow dependencies. 20
+name:validate-corpus-pr
+on:
+pull_request:
+paths:
+-"references/**.jsonl"
+-"schemas/**.json"
+-"probe-packs/**"
+-".github/workflows/validate-pr.yml"
+permissions:
+contents:read
+pull-requests:write
+jobs:
+validate:
+runs-on:ubuntu-latest
+steps:
+-name:Checkout
+uses:actions/checkout@v4
+-name:Setup Python
+uses:actions/setup-python@v5
+with:
+python-version:"3.12"
+-name:Install validator
+run:|
+python -m pip install --upgrade pip
+pip install jsonschema fastjsonschema
+-name:Validate changed JSONL rows
+run:|
+7
+
+--- PAGE 8 ---
+python tools/validators/validate_changed_jsonl.py \
+--schema schemas/corpus-row.schema.json \
+--base-ref origin/${{ github.base_ref }} \
+--head-ref ${{ github.sha }}
+-name:Check forbidden fields
+run:|
+python tools/validators/check_forbidden_fields.py \
+--forbid raw_prompt raw_output authorization cookie screenshots
+-name:Upload validator report
+if:always()
+uses:actions/upload-artifact@v4
+with:
+name:validator-report
+path:reports/
+retention-days:7
+Sample issue-intake workflow
+This workflow demonstrates a safe posture for public issue metadata: it does not fetch or execute
+contributor code, and it treats all issue body content as untrusted input. That follows GitHub’s secure-
+use guidance on untrusted contexts and elevated workflow triggers. 21
+name:validate-issue-intake
+on:
+issues:
+types:[opened,edited]
+permissions:
+contents:read
+issues:write
+jobs:
+lint-intake:
+if:contains(github.event.issue.labels.*.name, 'intake')
+runs-on:ubuntu-latest
+steps:
+-name:Checkout default branch only
+uses:actions/checkout@v4
+-name:Extract issue body safely
+env:
+ISSUE_BODY:${{ github.event.issue.body }}
+run:|
+python tools/validators/validate_issue_manifest.py <<< "$ISSUE_BODY"
+-name:Comment on invalid intake
+if:failure()
+8
+
+--- PAGE 9 ---
+uses:actions/github-script@v7
+with:
+script:|
+github.rest.issues.createComment({
+...context.repo,
+issue_number: context.issue.number,
+body: "Validation failed. Please remove raw data and re-submit the sanitized manifest."
+})
+Maintainer governance
+A Trusted Reference Corpus needs a governance model that separates candidate evidence, accepted
+reference, and historical archive. A good trust model has at least four tiers. T0 Official is a sanitized
+submission from a documented first-party endpoint whose endpoint class and payload family match
+provider docs. T1 Reproduced is a record a maintainer or designated verifier has independently re-run
+and matched within tolerance. T2 Community is a well-formed submission from the community that has
+not yet been independently reproduced. T3 Adversarial or test is a synthetic or intentionally
+manipulated sample used to evaluate poisoning resistance. This tiering prevents the corpus from
+pretending that all rows are equally reliable. The need for such separation is underscored by providers’
+own compatibility and retention differences across native APIs, OpenAI-compat layers, cloud platforms,
+and special features. 22
+Acceptance criteria should be explicit and machine-checkable before human review begins. At minimum,
+a candidate should validate against the active schema, be generated by a supported sanitizer version,
+contain no forbidden fields, include endpoint classification evidence, meet the minimum probe and
+repeat threshold for its claimed tier, and pass duplicate or contradiction checks against recent
+submissions. Human review should then confirm that the evidence is plausible, not obviously spoofed,
+and worth promoting. Because issue forms are converted into standard markdown issues and
+contributors can edit them later, the workflow should persist a normalized copy of the intake manifest in
+CI output or bot comments so reviewers know what was originally submitted. 23
+Versioning should be split into four tracks. Use semantic versioning for the evidence schema and
+sanitizer, semantic or date-based versioning for probe packs, and date-based releases for the published
+corpus snapshot. References themselves should carry provenance fields including schema_version ,
+probe_pack_version , sanitizer_version , ingested_at_bucket , and accepted_in_release . This makes
+later reprocessing and backward compatibility manageable when provider behavior changes or when the
+corpus learns new features. Provider change is inevitable: OpenAI has updated data-control behavior,
+Anthropic documents model-specific retention exceptions, and Google documents both standard and
+ZDR-specific state behaviors. 24
+Deprecation policy should be age- and event-driven. A reference should become stale automatically
+after a fixed horizon unless it is revalidated. A stricter rule should mark references stale immediately
+when a provider changes model identifiers, tokenizer behavior, major API compatibility constraints, or
+retention-feature semantics that could affect collected evidence. Anthropic, for example, explicitly
+documents compatibility-layer limitations and notes that some newer models have tokenizer changes
+and retention constraints; Google distinguishes between preview and stable models; OpenAI continues to
+evolve pricing, tooling, and the preferred API surface. A stale record should remain queryable for
+historical analysis but should not anchor new similarity judgments unless specifically requested. 25
+9
+
+--- PAGE 10 ---
+Maintainer operational checklist
+1. Confirm that the intake path is valid: issue, PR, or private-quarantine record, and that the
+submission includes a schema version and sanitizer version. 23
+2. Run or inspect automated validation results: schema pass, forbidden-field scan, endpoint
+classification, duplicate detection, and corpus-policy checks. 26
+3. Verify trust claim. If the submitter claims an official endpoint, confirm the hostname and path
+family against provider documentation before assigning T0 eligibility. 27
+4. Inspect privacy posture. Reject immediately if any raw prompt, raw output, API key, cookie,
+screenshot, file upload, or other sensitive content is visible. 28
+5. Check repeatability. If the sample is important enough for T0 or T1 , queue an independent
+rerun or request a maintainer rerun from the same provider family. 29
+6. Apply workflow and trust labels, add the correct milestone, and route to the right CODEOWNER if
+the submission touches schemas, probe packs, or rules. 30
+7. Merge only after required status checks and review rules pass. Prefer rulesets and branch
+protections that require review and status checks on the default branch. 31
+8. On acceptance, update the canonical JSONL, changelog, and release metadata; on rejection, leave
+a standardized reason code; on privacy incidents, follow the takedown and removal runbook. 32
+Plugin and client architecture
+The plugin should be split into a light detection core and disabled-by-default contribution features.
+This architecture directly addresses the risk of code bloat and follows the principle that normal users
+should not pay the complexity cost of the corpus program unless they opt in. The light core only needs
+endpoint classification, probe execution, timing collection, and local scoring. Everything else can live
+behind a feature flag or separate installation extra. This also aligns with provider guidance that secrets
+must be handled server-side or on trusted backends rather than casually embedded in client-side flows.
+33
+A concrete Python-oriented module layout is below.
+astrbot_llm_fingerprint/
+core/
+endpoint_classifier.py
+probe_runner.py
+protocol_sampler.py
+timing_sampler.py
+similarity_engine.py
+probe_packs/
+__init__.py
+pack_core_v1.py
+pack_official_min_v1.py
+pack_routing_v1.py
+contribution/
+consent_ui.py
+sanitizer.py
+bundle_builder.py
+browser_issue_submitter.py
+git_app_submitter.py
+pr_submitter.py
+10
+
+--- PAGE 11 ---
+local_exporter.py
+schemas/
+evidence_package.py
+corpus_row.py
+sanitizer_report.py
+storage/
+local_queue.py
+cache.py
+ui/
+dialogs.py
+preview_panel.py
+config/
+policy.py
+endpoint_allowlist.yml
+The endpoint_classifier should implement exact-host matching, path-family matching, optional TLS/
+SNI checks if available in your runtime, and a conservative fallback mode. The probe_runner should be
+deterministic by default, with defined repeat counts and timeout ceilings. The protocol_sampler should
+collect only safe protocol metadata such as header presence, SSE event family, request-id presence,
+latency, and size buckets. The sanitizer should run after evidence collection but before any
+serialization intended for export. The bundle_builder should produce two outputs: a private full local
+bundle for user audit and a public-safe export bundle. The submitter modules should be separate so that
+a lean installation can omit GitHub dependencies entirely. 34
+For submission transport, the plugin should support three modes. browser_issue_submitter is the
+safest default because it uses GitHub’s issue-query flow and requires no stored GitHub token.
+git_app_submitter is appropriate when you operate a relay service or a project-managed GitHub App
+and want richer automation with fine-grained permissions. pr_submitter is best reserved for advanced
+users or maintainers because PR-based dataset updates require branch or fork management and
+stronger authentication. GitHub Apps are attractive here because they can request issue and pull-request
+access without requesting blanket repository access, unlike OAuth apps that often require broader
+scopes. 35
+The consent UI should be explicit and local-first. It should show the destination repository, the
+publication visibility, the exact submission mode, and a concise “never upload” list. It should also
+expose a one-click local export path for users who want to inspect a JSON file or contribute later. Since
+GitHub issue forms are ultimately converted into normal issue bodies, the preview should display the
+final compact manifest that would appear on GitHub rather than a separate internal object shape. 36
+Plugin developer operational checklist
+1. Implement endpoint allowlisting from provider docs with exact host and path-family matches
+before enabling any “official reference” contribution prompt. 27
+2. Keep raw prompts and outputs in memory only as long as needed to derive safe features, then
+drop them before export serialization. 37
+3. Add a sanitizer stage that blocks export if any forbidden field remains or if the manifest includes
+free-text payloads above a safe threshold. 38
+4. Make contribution features optional at install time and disabled by default at runtime. 13
+5. Prefer browser-based issue submission for public repos; reserve token-based submission for
+advanced or self-hosted configurations. 39
+11
+
+--- PAGE 12 ---
+6. Preserve a local queue and retry logic so network failures do not force contributors to rerun
+probes.
+7. Version every bundle with schema_version , probe_pack_version , and sanitizer_version so the
+server side can reject outdated formats cleanly.
+8. Add a local “diff preview” so the user sees exactly what will be uploaded and can cancel before
+any network call occurs.
+Data model, privacy, and security controls
+The public data model should be narrow and opinionated. It should contain only the fields required to
+compare probe behavior, verify provenance class, and manage corpus lifecycle. A good split is:
+manifest , probe_results[] , and sanitization . The manifest stores provider family, endpoint class,
+model identifier, environment class, version tags, and coarse timestamps. The probe_results array
+stores one row per probe execution with timing buckets, protocol features, and structural output
+features. The sanitization block records which rules ran and whether any sensitive classes were
+detected and dropped. This design makes JSONL a natural canonical format because each accepted line
+can be a self-contained record. GitHub Actions and ordinary diff review also work well with line-oriented
+JSONL. 40
+Sample JSON Schema
+{
+"$schema":"https://json-schema.org/draft/2020-12/schema",
+"$id":"corpus-row.schema.json",
+"type":"object",
+"required":[
+"record_id",
+"schema_version",
+"provider",
+"trust_tier",
+"endpoint_class",
+"model_claim",
+"probe_pack_version",
+"sanitizer_version",
+"ingested_at_bucket",
+"probe_results",
+"sanitization"
+],
+"properties":{
+"record_id":{"type":"string","pattern":"^trc_[a-z0-9]{16,}$"},
+"schema_version":{"type":"string"},
+"provider":{"type":"string","enum":["openai","anthropic","google"]},
+"trust_tier":{"type":"string","enum":["T0","T1","T2","T3"]},
+"endpoint_class":{
+"type":"object",
+"required":["host","path_family","official_match"],
+"properties":{
+"host":{"type":"string"},
+"path_family":{"type":"string"},
+"official_match":{"type":"boolean"}
+12
+
+--- PAGE 13 ---
+}
+},
+"model_claim":{"type":"string"},
+"probe_pack_version":{"type":"string"},
+"sanitizer_version":{"type":"string"},
+"ingested_at_bucket":{"type":"string","description":"e.g. 2026-07-03T14:00Z"},
+"probe_results":{
+"type":"array",
+"items":{
+"type":"object",
+"required":["probe_id","repeat_index","timing","protocol","output_features"],
+"properties":{
+"probe_id":{"type":"string"},
+"repeat_index":{"type":"integer","minimum":0},
+"timing":{
+"type":"object",
+"properties":{
+"ttft_ms_bucket":{"type":"integer"},
+"tokens_per_sec_bucket":{"type":"number"},
+"interval_histogram":{"type":"array","items":{"type":"integer"}}
+}
+},
+"protocol":{
+"type":"object",
+"properties":{
+"request_id_present":{"type":"boolean"},
+"sse_family":{"type":"string"},
+"header_presence":{"type":"array","items":{"type":"string"}}
+}
+},
+"output_features":{
+"type":"object",
+"properties":{
+"char_len_bucket":{"type":"integer"},
+"line_count_bucket":{"type":"integer"},
+"json_valid":{"type":"boolean"},
+"markdown_ratio_bucket":{"type":"number"},
+"structure_hash":{"type":"string"}
+}
+}
+}
+}
+},
+"sanitization":{
+"type":"object",
+"required":["raw_text_uploaded","forbidden_fields_found","rules_applied"],
+"properties":{
+"raw_text_uploaded":{"type":"boolean","const":false},
+"forbidden_fields_found":{"type":"array","items":{"type":"string"}},
+"rules_applied":{"type":"array","items":{"type":"string"}}
+}
+13
+
+--- PAGE 14 ---
+}
+}
+}
+Sample JSONL row
+{"record_id":"trc_9f3cb41a87f2c0de","schema_version":"1.0.0","provider":"openai","trust_tier":"T0","endpoint_class":
+{"host":"api.openai.com","path_family":"/v1","official_match":true},"model_claim":"gpt-5.4-
+mini","probe_pack_version":"pack-official-min-
+v1.2.0","sanitizer_version":"1.1.0","ingested_at_bucket":"2026-07-03T14:00Z","probe_results":
+[{"probe_id":"json_mode_001","repeat_index":0,"timing":{"ttft_ms_bucket":
+275,"tokens_per_sec_bucket":41.5,"interval_histogram":[3,9,12,4,0]},"protocol":
+{"request_id_present":true,"sse_family":"openai-responses-sse","header_presence":["x-request-
+id","content-type"]},"output_features":{"char_len_bucket":800,"line_count_bucket":
+22,"json_valid":true,"markdown_ratio_bucket":0.15,"structure_hash":"h:6b7f..."}},
+{"probe_id":"json_mode_001","repeat_index":1,"timing":{"ttft_ms_bucket":
+250,"tokens_per_sec_bucket":43.0,"interval_histogram":[2,10,11,5,0]},"protocol":
+{"request_id_present":true,"sse_family":"openai-responses-sse","header_presence":["x-request-
+id","content-type"]},"output_features":{"char_len_bucket":780,"line_count_bucket":
+21,"json_valid":true,"markdown_ratio_bucket":0.11,"structure_hash":"h:71c2..."}}],"sanitization":
+{"raw_text_uploaded":false,"forbidden_fields_found":[],"rules_applied":
+["drop_raw_prompt","drop_raw_output","drop_auth_headers","bucket_timestamp","hash_request_ids"]}}
+Hashing and anonymisation should use purpose-built, rotating transforms, not raw hashes of obvious
+identifiers. For unlinkable public publication, use HMAC-SHA256(secret_salt, normalized_value) for user
+IDs, org IDs, request IDs, and any stable identifier that should remain comparable within a release but not
+easily reversible outside the project. Rotate the salt on a release or monthly cadence and do not publish
+the salt. Bucket timestamps to hour or day, not exact milliseconds. Bucket token lengths and line counts.
+If you need text-adjacent similarity without storing text, prefer structure hashes, token-shape histograms,
+or short-window minhashes over any scheme that preserves reconstructible substrings. This approach is
+more consistent with de-identification guidance than plain unsalted hashing. 41
+The sanitizer’s “must never upload” list should be uncompromising: API keys, bearer tokens, cookies,
+Authorization headers, raw prompts, raw outputs, screenshots, files, hidden-system-prompt dumps,
+uploaded documents, email addresses, phone numbers, IP addresses, exact account or organization IDs,
+and any content copied from provider dashboards. OpenAI explicitly warns not to deploy API keys in
+client-side environments, and GitHub warns that uploads on public issue and PR conversations can be
+viewed anonymously. Those two facts together are sufficient to justify a default-deny export design. 42
+Differential privacy should be treated as an optional publication layer for aggregates, not as the
+primary protection on individual corpus rows. NIST’s guidance describes differential privacy as a way to
+quantify privacy loss and add calibrated noise, but a fingerprinting corpus depends on preserving fine-
+grained behavior differences between providers and models. If you add DP noise to the raw accepted
+reference rows, you weaken the corpus. A better use is for repo-level dashboards such as “submissions
+by provider,” “acceptance rate by week,” or “average TTFT by tier.” Apply conventional de-
+identification to row data and optional DP to public aggregate analytics. 43
+14
+
+--- PAGE 15 ---
+Costs, risks, and roadmap
+The recurring cash cost is dominated by direct-provider sampling and verifier reruns, not by GitHub
+coordination. OpenAI’s current standard pricing for gpt-5.4-mini is $0.75 per 1M input tokens and
+$4.50 per 1M output tokens; Anthropic’s documented introductory pricing for Claude Sonnet 5 is $2/$10
+per 1M input/output tokens through August 31, 2026, then $3/$15 standard; Google’s Gemini pricing
+pages show low-cost Flash-family options, for example Gemini 3 Flash at $0.125 per 1M input tokens and
+$0.75 per 1M output tokens in the referenced pricing blocks, while some other Flash-family and preview
+models cost more. OpenAI and Anthropic also note behaviors that matter for budgeting, such as billed
+output for reasoning/thinking and model-specific feature costs. Those rates make a community corpus
+viable at MVP scale if probe packs are compact and trusted reruns are selective. 44
+The table below is a scenario estimate, not a vendor quote. It assumes a public canonical repo, optional
+private intake, compact probe packs, and selective reruns. Cash outlay is shown separately from optional
+paid labor because many community projects will start volunteer-led.
+Monthly
+Optional
+Scale Typical scope cash Main cost drivers
+paid labor
+outlay
+3 providers, 10–20 actively Direct API calls, light CI,
+refreshed model claims, 20– $150– domain/docs,
+MVP $0–$3,000
+30 probes, browser issue $1,000 occasional private
+intake, minimal reruns storage
+3–5 providers, 30–60 model
+More reruns, more
+claims, 30–60 probes, private $1,000– $3,000–
+Mid-scale human review, private
+quarantine repo, regular $5,000 $12,000
+intake, monitoring
+verifier reruns
+Alliance-run, regional
+Sustained verification,
+refreshes, hundreds of active
+Large $5,000– $12,000– staff time, governance,
+reference rows, scheduled re-
+program $25,000+ $50,000+ security response, legal
+audits, dedicated bot/App
+handling
+infra
+A sensible funding model is a reference alliance: maintainers contribute governance, direct-API
+customers contribute a small monthly refresh budget, plugin developers contribute implementation
+labor, and research users or vendors sponsor verifier reruns or bounty pools. GitHub’s collaboration
+model, milestone tracking, and CODEOWNERS support this kind of shared custodianship well. If you need
+formal provenance for generated release bundles, GitHub also supports artifact attestations for build
+provenance, though that should be applied to release artifacts and validator outputs rather than
+confused with model-origin provenance. 45
+Roles and responsibilities
+Nice-to-have
+Role Core responsibilities
+background
+Governance, release decisions, escalation, OSS governance, LLM
+Project lead
+provider-policy changes infra
+15
+
+--- PAGE 16 ---
+Nice-to-have
+Role Core responsibilities
+background
+Privacy Redaction rules, takedown handling, private/ Privacy engineering,
+maintainer public boundary review compliance
+Validation Schemas, Actions workflows, validator logic, Python, CI/CD, GitHub
+maintainer corpus QA Actions
+Probe-pack Probe design, versioning, reproducibility, probe LLM evals,
+maintainer drift management benchmarking
+Independent reruns on official endpoints, trust-
+Verifier Direct provider accounts
+tier upgrades
+Community Issue labeling, dedupe, milestone hygiene,
+GitHub Issues/Projects
+triager contributor guidance
+Security Workflow hardening, App permissions, secret GitHub security, supply
+maintainer handling, incident response chain
+Risk versus mitigation matrix
+Risk Why it matters Recommended mitigation
+Attackers can submit Tiered trust model, mandatory schema and
+Poisoning
+crafted evidence to skew sanitizer checks, independent reruns for T0/T1 ,
+submissions
+the corpus duplicate and contradiction detection
+Spoofed Exact-host allowlist, path-family rules, provider-
+A proxy can mimic
+“official” specific header family checks, conservative
+provider syntax
+claims downgrade when uncertain
+No raw uploads in public repo, metadata-only
+Public GitHub uploads can
+Privacy leakage issue forms, private intake/quarantine for richer
+be viewed without auth
+evidence, strict “must never upload” rules
+Untrusted issue/PR Avoid checking out untrusted code in privileged
+Workflow
+content can exploit workflows, treat issue bodies and artifacts as
+compromise
+Actions untrusted input, pin actions to SHAs
+Takedown playbook, privacy-removal playbook,
+Rights holders or users
+Legal takedown small-batch releases, immutable release notes
+may demand removal
+plus removable source rows
+Model behavior,
+Provider tokenization, or Version tracks, stale marking, scheduled refreshes,
+changes compatibility layers deprecation policy
+change
+Too much ceremony
+Browser-based no-token issue flow, compact
+UX friction reduces community
+consent UI, optional modules, local export path
+participation
+Maintainer Review bottlenecks Automated gates, milestones, CODEOWNERS
+overload degrade trust routing, alliance model, periodic backlog sweeps
+16
+
+--- PAGE 17 ---
+The workflow-security row deserves emphasis. GitHub’s secure-use guidance warns about untrusted
+inputs, script injection, and the danger of elevated triggers such as pull_request_target when
+combined with untrusted checkout. Public corpus repos will receive hostile input eventually, so every
+workflow must treat issue bodies, labels, titles, PR metadata, and uploaded artifacts as attacker-
+controlled. Use read-only workflows wherever possible, separate comment/triage jobs from content-
+validation jobs, and never run contributor-supplied code in a privileged context. 46
+Implementation roadmap
+TrustedReferenceCorpusrollout
+Governancedraftandrepobootstrap
+Foundation Schemav1andsanitizerv1
+Publicrepogovernanceandrulesets
+Browserissueflowandmetadataform
+Intake Privateintakemirrorandquarantine
+Actionsvalidatorsanddedupe
+Lightcoreproberunner
+Plugin Optionalcontributionmodule
+LocalpreviewandexportUX
+Trusted-tierpolicyrollout
+Trustprogram Verifierrerunplaybook
+Firstpubliccorpusrelease
+GitHubApporrelaysubmitter
+Scale Scheduledrefreshandstalemarking
+Sponsorandallianceonboarding
+2026-07-12 2026-07-19 2026-07-26 2026-08-02 2026-08-09 2026-08-16 2026-08-23 2026-08-30 2026-09-06 2026-09-13 2026-09-20 2026-09-27 2026-10-04 2026-10-11 2026-10-18
+A practical milestone plan is as follows. In the first month, ship governance docs, schema v1, sanitizer v1,
+browser-based public intake, CODEOWNERS, rulesets, and a minimal validator workflow. In the second
+month, add the optional contribution module, local preview/export, private quarantine repo, and trust-
+tier labeling. In the third month, start independent reruns and publish the first stable release snapshot.
+Only after that should you add GitHub App automation, more providers, or sophisticated dedupe and
+provenance tooling. This sequencing minimizes privacy risk early and avoids over-engineering before you
+have real submissions. 47
+The strategic conclusion is straightforward: GitHub can absolutely host and govern a community
+Trusted Reference Corpus for LLM fingerprinting, but it must not be treated as a dump for raw
+evidence. If you keep the plugin modular, use browser-based opt-in submission as the default, publish
+only sanitized manifests and accepted JSONL rows, run a private quarantine lane for anything richer, and
+enforce trust tiers with reproducibility gates, you can build a durable community asset without turning
+the project into either a privacy hazard or an unmaintainable monolith. 48
+1 14 19 Configuring issue templates for your repository - GitHub Docs
+https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/configuring-issue-
+templates-for-your-repository
+2 11 27 How can I view the users or organizations associated with an API key? | OpenAI Help Center
+https://help.openai.com/en/articles/9132009-how-can-i-view-the-users-or-organizations-associated-with-an-api-key
+3 47 About rulesets - GitHub Docs
+https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-
+rulesets
+4 44 Pricing | OpenAI API
+https://developers.openai.com/api/docs/pricing
+5 23 36 Syntax for issue forms - GitHub Docs
+https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/syntax-for-issue-
+forms
+17
+
+--- PAGE 18 ---
+6 28 Attaching files
+https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/attaching-files?
+utm_source=chatgpt.com
+7 PII - Glossary - NIST CSRC
+https://csrc.nist.gov/glossary/term/PII?utm_source=chatgpt.com
+8 26 40 Store and share data with workflow artifacts - GitHub Docs
+https://docs.github.com/en/actions/tutorials/store-and-share-data
+9 24 Data controls in the OpenAI platform
+https://developers.openai.com/api/docs/guides/your-data
+10 18 35 39 48 Creating an issue - GitHub Docs
+https://docs.github.com/articles/creating-an-issue
+12 37 SP 800-122, Guide to Protecting the Confidentiality of ...
+https://csrc.nist.gov/pubs/sp/800/122/final?utm_source=chatgpt.com
+13 33 42 Best Practices for API Key Safety
+https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety?utm_source=chatgpt.com
+15 30 Managing labels - GitHub Docs
+https://docs.github.com/en/issues/using-labels-and-milestones-to-track-work/managing-labels
+16 About code owners - GitHub Docs
+https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-
+code-owners
+17 Differences between GitHub Apps and OAuth apps
+https://docs.github.com/enterprise-cloud%40latest/apps/oauth-apps/building-oauth-apps/differences-between-github-apps-
+and-oauth-apps?utm_source=chatgpt.com
+20 46 Secure use reference - GitHub Docs
+https://docs.github.com/en/actions/reference/security/secure-use
+21 Script injections - GitHub Docs
+https://docs.github.com/en/actions/concepts/security/script-injections
+22 29 34 API overview - Claude Platform Docs
+https://docs.anthropic.com/claude/reference/getting-started-with-the-api
+25 OpenAI SDK compatibility - Claude Platform Docs
+https://docs.anthropic.com/en/api/openai-sdk
+31 Managing a branch protection rule - GitHub Docs
+https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-
+branches/managing-a-branch-protection-rule
+32 DMCA Takedown Policy
+https://docs.github.com/en/site-policy/content-removal-policies/dmca-takedown-policy?utm_source=chatgpt.com
+38 41 IR 8053, De-Identification of Personal Information - NIST CSRC
+https://csrc.nist.gov/pubs/ir/8053/final?utm_source=chatgpt.com
+43 Guidelines for Evaluating Differential Privacy Guarantees
+https://csrc.nist.gov/pubs/sp/800/226/final?utm_source=chatgpt.com
+18
+
+--- PAGE 19 ---
+45 About milestones - GitHub Docs
+https://docs.github.com/issues/using-labels-and-milestones-to-track-work/about-milestones
+19

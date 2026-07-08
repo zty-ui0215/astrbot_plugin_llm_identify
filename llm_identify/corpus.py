@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .corpus_validation import validate_trusted_corpus_or_raise
 from .features.fingerprint import FAMILIES, MethodFingerprint
 from .utils import clamp
 
@@ -113,7 +114,9 @@ class TrustedCorpusLoader:
         claimed_model: str,
         degraded_reason: str | None = None,
     ) -> CorpusLoadResult:
+        validation = validate_trusted_corpus_or_raise(raw)
         metadata = _metadata(raw, self.source.source_id, status)
+        metadata["validation"] = validation.as_metadata()
         models = _extract_corpus_models(raw, self.source.source_id)
         method = _score_corpus(models, raw, provider_id=provider_id, claimed_model=claimed_model, source_id=self.source.source_id)
         return CorpusLoadResult(
@@ -318,3 +321,4 @@ def _normalize_family(value: str) -> str | None:
     if lower in {"open_source", "open-source", "open_source_or_relay", "relay", "proxy", "llama", "qwen", "mistral"}:
         return "open_source_or_relay"
     return None
+

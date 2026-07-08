@@ -20,6 +20,7 @@ try:
     from .llm_identify.adapters.direct_openai import DirectOpenAICompatibleAdapter
     from .llm_identify.capture import TraceStore
     from .llm_identify.engine import AuditEngine, AuditOptions
+    from .llm_identify.i18n import normalize_language, t
     from .llm_identify.models import AuditReport, ModelReply
     from .llm_identify.scoring import format_text_report
     from .llm_identify.utils import detect_model_family
@@ -29,6 +30,7 @@ except ImportError:
     from llm_identify.adapters.direct_openai import DirectOpenAICompatibleAdapter
     from llm_identify.capture import TraceStore
     from llm_identify.engine import AuditEngine, AuditOptions
+    from llm_identify.i18n import normalize_language, t
     from llm_identify.models import AuditReport, ModelReply
     from llm_identify.scoring import format_text_report
     from llm_identify.utils import detect_model_family
@@ -59,6 +61,7 @@ class LLMIdentifyPlugin(Star):
         self.enable_auxiliary_llm_judge = self._cfg_bool("enable_auxiliary_llm_judge", False)
         self.auxiliary_judge_provider_id = str(self.config.get("auxiliary_judge_provider_id", "") or "").strip()
         self.strict_mode = self._cfg_bool("strict_mode", False)
+        self.default_language = normalize_language(self.config.get("language") or self.config.get("locale"))
         self.last_report: AuditReport | None = None
         self._running = False
 
@@ -69,29 +72,23 @@ class LLMIdentifyPlugin(Star):
     @filter.command("llmid")
     async def llmid(self, event: AstrMessageEvent):
         """Audit the current conversation provider. Usage: /llmid, /llmid full, /llmid help"""
-        mode = self._parse_mode(event.message_str or "")
+        mode, language = self._parse_mode(event.message_str or "")
         if mode == "help":
-            yield event.plain_result(
-                "LLM Identify commands:\n"
-                "- /llmid: run a quick protocol audit for the current provider\n"
-                "- /llmid full: run protocol, token-accounting, and fingerprint audits\n"
-                "- /llmid help: show this help\n\n"
-                "Open the LLM Identify panel from the AstrBot plugin extension page for the web UI."
-            )
+            yield event.plain_result(t("cmd.help", language))
             return
 
-        yield event.plain_result("Starting LLM endpoint audit. Quick mode usually takes 15-45 seconds; full mode runs token and fingerprint probes and can take longer.")
-        report = await self.run_detection(event, full=mode == "full")
-        yield event.plain_result(format_text_report(report))
+        yield event.plain_result(t("cmd.start", language))
+        report = await self.run_detection(event, full=mode == "full", language=language)
+        yield event.plain_result(format_text_report(report, language))
 
-    async def run_detection(self, event: AstrMessageEvent | None = None, *, full: bool = False) -> AuditReport:
+    async def run_detection(self, event: AstrMessageEvent | None = None, *, full: bool = False, language: str | None = None, provider_id: str | None = None) -> AuditReport:
         if self._running:
-            raise RuntimeError("An audit is already running. Try again after it completes.")
+            raise RuntimeError(t("error.audit_running", language or self.default_language))
         self._running = True
         try:
-            provider_id = await self._get_provider_id(event)
+            provider_id = str(provider_id or "").strip() or await self._get_provider_id(event)
             if not provider_id:
-                raise RuntimeError("No usable provider was found. Use /llmid in a chat or set page_provider_id in plugin config.")
+                raise RuntimeError(t("error.no_provider", language or self.default_language))
             claimed_model = await self._get_claimed_model(provider_id)
 
             async def generate(prompt: str, **kwargs: Any) -> ModelReply:
@@ -104,24 +101,24 @@ class LLMIdentifyPlugin(Star):
                 generate_fn=generate,
                 trace_store=TraceStore(),
             )
-            report = await AuditEngine(adapter, self._audit_options(full=full)).run()
+            report = await AuditEngine(adapter, self._audit_options(full=full, language=language)).run()
             self.last_report = report
             return report
         finally:
             self._running = False
 
-    async def run_direct_openai_detection(self, payload: dict[str, Any]) -> AuditReport:
+    async def run_direct_openai_detection(self, payload: dict[str, Any], *, language: str | None = None) -> AuditReport:
         if self._running:
-            raise RuntimeError("An audit is already running. Try again after it completes.")
+            raise RuntimeError(t("error.audit_running", language or self.default_language))
         base_url = str(payload.get("base_url") or "").strip()
         api_key = str(payload.get("api_key") or "").strip()
         model = str(payload.get("model") or "").strip()
         if not base_url:
-            raise RuntimeError("Direct API Base URL is required.")
+            raise RuntimeError(t("error.base_url_required", language or self.default_language))
         if not api_key:
-            raise RuntimeError("Direct API Key is required.")
+            raise RuntimeError(t("error.api_key_required", language or self.default_language))
         if not model:
-            raise RuntimeError("Direct API Model is required.")
+            raise RuntimeError(t("error.model_required", language or self.default_language))
         self._running = True
         try:
             client = DirectOpenAICompatibleAdapter(base_url=base_url, api_key=api_key, model=model, timeout=self.timeout)
@@ -135,8 +132,9 @@ class LLMIdentifyPlugin(Star):
                 claimed_model=model,
                 generate_fn=generate,
                 trace_store=TraceStore(),
+                count_tokens_fn=client.count_tokens,
             )
-            report = await AuditEngine(adapter, self._audit_options(full=bool(payload.get("full", True)))).run()
+            report = await AuditEngine(adapter, self._audit_options(full=bool(payload.get("full", True)), language=language)).run()
             self.last_report = report
             return report
         finally:
@@ -145,11 +143,11 @@ class LLMIdentifyPlugin(Star):
     async def _ask_current_model(self, provider_id: str, prompt: str, **kwargs: Any) -> ModelReply:
         llm_generate = getattr(self.context, "llm_generate", None)
         if not callable(llm_generate):
-            raise RuntimeError("The current AstrBot context does not support llm_generate.")
+            raise RuntimeError(t("error.context_generate", self.default_language))
         response = await llm_generate(prompt=prompt, chat_provider_id=provider_id, **kwargs)
         return reply_from_astrbot_response(response)
 
-    def _audit_options(self, *, full: bool) -> AuditOptions:
+    def _audit_options(self, *, full: bool, language: str | None = None) -> AuditOptions:
         return AuditOptions(
             enable_protocol_probe=self.enable_protocol_probe,
             enable_token_probe=full or self.enable_token_probe,
@@ -160,12 +158,13 @@ class LLMIdentifyPlugin(Star):
             enable_auxiliary_llm_judge=self.enable_auxiliary_llm_judge,
             auxiliary_judge_fn=self._auxiliary_judge if self.enable_auxiliary_llm_judge else None,
             strict_mode=self.strict_mode,
+            language=normalize_language(language or self.default_language),
         )
 
     async def _auxiliary_judge(self, prompt: str) -> str:
         provider_id = self.auxiliary_judge_provider_id or self.page_provider_id or await self._get_provider_id(None)
         if not provider_id:
-            raise RuntimeError("No auxiliary judge provider is configured or discoverable.")
+            raise RuntimeError(t("error.no_aux_judge", self.default_language))
         reply = await self._ask_current_model(provider_id, prompt, temperature=0.0)
         return reply.text
 
@@ -241,15 +240,20 @@ class LLMIdentifyPlugin(Star):
             register_web_api(f"{PAGE_API_PREFIX}{path}", handler, methods, desc)
         logger.info("[LLMIdentify] page api registered at %s", PAGE_API_PREFIX)
 
-    async def page_status(self) -> dict[str, Any]:
-        provider_id = await self._get_provider_id(None)
+    async def page_status(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        payload = await self._extract_page_payload(*args, **kwargs)
+        language = normalize_language(payload.get("language") or self.default_language)
+        requested_provider_id = str(payload.get("provider_id") or "").strip()
+        provider_id = requested_provider_id or await self._get_provider_id(None)
         claimed_model = await self._get_claimed_model(provider_id) if provider_id else "unknown"
+        providers = await self._get_provider_options(selected_provider_id=provider_id)
         return self._ok(
             {
                 "running": self._running,
                 "provider_id": provider_id or "unknown",
                 "claimed_model": claimed_model,
                 "model_family_guess": detect_model_family(claimed_model, provider_id or ""),
+                "providers": providers,
                 "config": {
                     "timeout": self.timeout,
                     "page_provider_id": self.page_provider_id,
@@ -263,30 +267,32 @@ class LLMIdentifyPlugin(Star):
                     "auxiliary_judge_provider_id": self.auxiliary_judge_provider_id,
                     "strict_mode": self.strict_mode,
                 },
-                "last_report": self._report_payload(self.last_report),
+                "last_report": self._report_payload(self.last_report, language),
             }
         )
 
     async def page_detect(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         try:
             payload = await self._extract_page_payload(*args, **kwargs)
+            language = normalize_language(payload.get("language") or self.default_language)
             mode = str(payload.get("mode") or "astrbot").strip().lower()
             full = bool(payload.get("full", mode.endswith("_full")))
             if mode.startswith("direct_openai"):
                 payload["full"] = full
-                report = await self.run_direct_openai_detection(payload)
+                report = await self.run_direct_openai_detection(payload, language=language)
             else:
-                report = await self.run_detection(None, full=full)
-            return self._ok({"report": self._report_payload(report)})
+                provider_id = str(payload.get("provider_id") or "").strip() or None
+                report = await self.run_detection(None, full=full, language=language, provider_id=provider_id)
+            return self._ok({"report": self._report_payload(report, language)})
         except Exception as exc:
             logger.warning("[LLMIdentify] page detect failed: %s", exc, exc_info=True)
             return self._error(str(exc))
 
-    def _report_payload(self, report: AuditReport | None) -> dict[str, Any] | None:
+    def _report_payload(self, report: AuditReport | None, language: str | None = None) -> dict[str, Any] | None:
         if report is None:
             return None
         payload = asdict(report)
-        payload["text"] = format_text_report(report)
+        payload["text"] = format_text_report(report, language or self.default_language)
         return payload
 
     @staticmethod
@@ -299,6 +305,12 @@ class LLMIdentifyPlugin(Star):
 
     async def _extract_page_payload(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         if quart_request is not None:
+            try:
+                query_args = getattr(quart_request, "args", None)
+                if query_args:
+                    return dict(query_args)
+            except Exception:
+                pass
             try:
                 payload = await quart_request.get_json(silent=True)
                 if isinstance(payload, dict):
@@ -351,6 +363,13 @@ class LLMIdentifyPlugin(Star):
     def _extract_provider_id(provider: Any) -> str | None:
         if provider is None:
             return None
+        if isinstance(provider, tuple) and len(provider) == 2:
+            key, provider_obj = provider
+            return LLMIdentifyPlugin._extract_provider_id(provider_obj) or (str(key) if key else None)
+        if isinstance(provider, dict):
+            value = provider.get("id") or provider.get("provider_id") or provider.get("name")
+            if value:
+                return str(value)
         if isinstance(provider, str):
             return provider
         for attr in ("id", "provider_id", "name"):
@@ -372,10 +391,60 @@ class LLMIdentifyPlugin(Star):
                 return None
         return None
 
+    async def _get_all_providers(self) -> list[Any]:
+        all_providers = getattr(self.context, "get_all_providers", None)
+        if not callable(all_providers):
+            return []
+        try:
+            providers = all_providers()
+            if hasattr(providers, "__await__"):
+                providers = await providers
+            if isinstance(providers, dict):
+                return list(providers.items())
+            return list(providers or [])
+        except Exception:
+            logger.debug("[LLMIdentify] get_all_providers failed", exc_info=True)
+            return []
+
+    async def _get_provider_options(self, *, selected_provider_id: str | None = None) -> list[dict[str, str]]:
+        options: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for provider in await self._get_all_providers():
+            provider_id = self._extract_provider_id(provider)
+            if not provider_id or provider_id in seen:
+                continue
+            seen.add(provider_id)
+            model = self._extract_provider_model(provider) or provider_id
+            options.append(
+                {
+                    "id": provider_id,
+                    "model": model,
+                    "label": self._provider_label(provider_id, model),
+                }
+            )
+        selected = str(selected_provider_id or "").strip()
+        if selected and selected not in seen:
+            model = await self._get_claimed_model(selected)
+            options.insert(0, {"id": selected, "model": model, "label": self._provider_label(selected, model)})
+        return options
+
+    @staticmethod
+    def _provider_label(provider_id: str, model: str) -> str:
+        if model and model != provider_id:
+            return f"{provider_id} ({model})"
+        return provider_id or model or "unknown"
+
     @staticmethod
     def _extract_provider_model(provider: Any) -> str | None:
         if provider is None:
             return None
+        if isinstance(provider, tuple) and len(provider) == 2:
+            provider = provider[1]
+        if isinstance(provider, dict):
+            for key in ("model", "model_name", "model_config"):
+                value = provider.get(key)
+                if isinstance(value, str) and value:
+                    return value
         get_model = getattr(provider, "get_model", None)
         if callable(get_model):
             try:
@@ -409,14 +478,15 @@ class LLMIdentifyPlugin(Star):
             value = default
         return max(minimum, min(maximum, value))
 
-    @staticmethod
-    def _parse_mode(text: str) -> str:
+    def _parse_mode(self, text: str) -> tuple[str, str]:
         normalized = text.lower().strip()
-        if normalized in {"/llmid help", "llmid help", "help"}:
-            return "help"
-        if normalized in {"/llmid full", "llmid full", "full"}:
-            return "full"
-        return "quick"
+        parts = [part for part in normalized.replace("/llmid", " ").replace("llmid", " ").split() if part]
+        language = next((part for part in parts if part in {"zh", "zh-cn", "cn", "ja", "ja-jp", "jp", "en", "en-us"}), self.default_language)
+        if "help" in parts:
+            return "help", language
+        if "full" in parts:
+            return "full", language
+        return "quick", language
 
     async def terminate(self):
         logger.info("[LLMIdentify] plugin terminated")

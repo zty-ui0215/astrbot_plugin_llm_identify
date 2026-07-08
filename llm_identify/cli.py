@@ -51,7 +51,7 @@ async def run_scan(args: argparse.Namespace) -> dict[str, Any]:
         return await client.generate(prompt, **kwargs)
 
     trace_store = TraceStore()
-    adapter = GenerateAdapter("direct_openai_compatible", args.target_id, args.model, generate, trace_store)
+    adapter = GenerateAdapter("direct_openai_compatible", args.target_id, args.model, generate, trace_store, count_tokens_fn=client.count_tokens)
     report = await AuditEngine(adapter, AuditOptions(enable_protocol_probe=True, enable_token_probe=True, enable_fingerprint_probe=True)).run()
     task.status = "completed"
     task.progress = 1.0

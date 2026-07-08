@@ -1,0 +1,821 @@
+
+
+--- PAGE 1 ---
+Technical Specification for an Upgraded LLM
+Fingerprinting and Auditing System for an
+AstrBot Plugin
+Executive Summary
+This specification defines an implementation-ready architecture for a black-box LLM fingerprinting and
+auditing system to be implemented by Codex as an AstrBot plugin, with the main user experience
+delivered through an AstrBot page panel and a reduced command-only mode used as an auxiliary
+fallback. The system is designed for OpenAI-compatible endpoints, but its evidence model is
+intentionally broader than protocol conformance because official compatibility layers from Anthropic
+and Google can present OpenAI-shaped surfaces while still exposing non-OpenAI behavioral, streaming,
+and token-accounting characteristics. The design therefore treats protocol evidence as necessary but
+weak, and combines it with knowledge-boundary signals, tokenizer and Unicode behavior, long-form
+natural-language behavior, timing and streaming traces, token/context authenticity checks, and
+longitudinal stability signals. This direction is consistent with the prior project report’s multi-method
+auditing approach and preserves its core idea of cross-checking heterogeneous evidence rather than
+relying on a single fingerprint library. fileciteturn(cid:63153)file(cid:63153) 1
+The main engineering change in this upgraded design is the replacement of any notion of a static
+“reliable fingerprint database” with a Community Fingerprint Corpus plus dynamic probe
+generation. Recent work shows that carefully selected active probes can identify model families with
+high accuracy, that stable numerical recall near the knowledge boundary is useful for auditing API
+substitution and mixed routing, that endpoint identity can drift over time even when uptime and latency
+look normal, and that spoofing attacks can make a weaker model imitate a stronger model well enough
+to evade overly static fingerprinting pipelines. As a result, the system should store public facts,
+discriminative hypotheses, validated probe templates, negative controls, and historical evidence quality
+—not just fixed prompts and fixed answers. 2
+For implementation, the recommended structure is a host-agnostic audit core plus an AstrBot host
+adapter. The audit core owns probe generation, execution, trace capture, feature extraction, evidence
+fusion, corpus management, and evaluation. The AstrBot layer owns page-panel rendering, config
+binding, task triggering, review workflows, and degraded command entrypoints. This separation keeps
+the scientific logic testable outside the host while still making the plugin usable inside AstrBot. The spec
+deliberately leaves deployment scale, exact hosting topology, and CI/CD tooling unspecified, as
+requested; all such choices are treated as deployment-time concerns rather than assumptions embedded
+into the design. 3
+Project Scope, Threat Model, and Assumptions
+The project goal is not “absolute attestation” of model identity. The goal is to produce a calibrated
+audit result that answers five questions: which provider family the endpoint most resembles, which
+model family or candidate versions it most resembles, whether the endpoint is likely direct or wrapped
+by a proxy/gateway, whether there is evidence of mixed routing or substitution, and whether the
+1
+
+--- PAGE 2 ---
+endpoint’s token and context claims are consistent with observed behavior. That framing is aligned
+with the direction of recent black-box auditing work, which explicitly treats model identity as a
+probabilistic inference problem under adversarial and deployment uncertainty rather than a
+deterministic yes/no label. 2
+The primary threat model includes honest-but-changing providers, resellers or relays that silently
+substitute backends, mixed-routing systems that send only a minority of requests to a different model,
+wrappers that add prompts or safety layers, context-summary gateways that make a smaller model look
+like a larger-context model, cache-aware intermediaries, and active spoofers that fine-tune a weaker
+model to imitate a stronger one. The system must also tolerate protocol-compatible surfaces that
+intentionally or unintentionally flatten provider differences. This threat model is motivated by KBF’s
+substitution-setting results, Stability Monitor’s findings on identity drift, Anthropic’s and Gemini’s
+official OpenAI-compatibility layers, and GhostPrint’s demonstration that spoofing can defeat brittle
+fingerprinting procedures. 4
+The main assumptions are intentionally narrow. The target endpoint is assumed to accept an OpenAI-
+compatible request surface for the plugin’s primary execution path. The design may optionally include
+native adapters for reference baselines, but the plugin’s production target remains OpenAI-compatible
+APIs. Deployment scale is unspecified. Exact hosting is unspecified. CI/CD is unspecified. The system
+therefore avoids assumptions that would require a fixed cluster size, a fixed scheduler, or a fixed release
+workflow. It should run on a single process for development and local testing, while also allowing
+separate worker and storage processes in larger deployments, but those packaging decisions remain out
+of scope for the scientific core.
+The system should assume imperfect observability. Some endpoints will not expose complete usage
+fields, stable request IDs, or predictable streaming traces. Some will normalize or ignore unsupported
+fields. Anthropic’s OpenAI SDK compatibility documentation explicitly states that some OpenAI fields
+are ignored, some are hoisted or concatenated, prompt caching is not supported in the compatibility
+layer, and fields such as system_fingerprint remain empty there. Gemini’s OpenAI compatibility page
+similarly shows that Gemini can be reached through OpenAI libraries with a modified base_url , and
+Google recommends the native Gemini API for access to the latest features. OpenAI’s own API overview
+emphasizes that response headers, request IDs, limits, and streaming events are part of the observable
+surface. These facts justify explicit handling of missingness and compatibility-layer transformations
+rather than treating them as random noise. 5
+System Architecture and AstrBot Integration
+The system should be implemented as five cooperating layers: Host Adapter, Audit Orchestrator,
+Execution & Capture, Feature & Fusion, and Corpus & Evaluation.
+2
+
+--- PAGE 3 ---
+AstrBotPagePanel
+AstrBotHostAdapter
+AuditOrchestrator
+Op T e a n r A g I e - t C A o d m a p p a te ti r ble DynamicProbeGenerator SamplingPlanner
+TraceCapture Commun C i o ty rp F u in s gerprint
+RawTraceStore FeatureExtraction Contrib Q u u ti e o u n e Review BenchmarkHarness
+BranchScorers
+EvidenceFusion
+AuditReport
+FallbackCommands
+The Host Adapter is AstrBot-specific and should expose a page-panel-first workflow. The page panel is
+the primary interface for target registration, suite selection, live execution, evidence review, corpus
+browsing, contribution review, and report export. A reduced command mode is retained for operational
+convenience and should only expose a minimal set of functions such as “run audit,” “show status,”
+“open latest report,” and “submit candidate evidence.” This matches the user requirement that
+command-triggered operation be auxiliary while the main experience lives in the page panel.
+The Audit Orchestrator must be host-independent. It owns suite resolution, target normalization, audit
+reproducibility metadata, probe-family quotas, rate-limit-aware scheduling, retries with jitter, and
+separation of “probe generation” from “probe execution.” That separation matters because official
+APIs expose rate limits and response headers differently, and because some evidence branches depend
+on repeated or delayed sampling. OpenAI documents both rate-limit headers and request IDs; Anthropic
+documents separate token-counting limits and Messages API streaming; Gemini’s Interactions API
+exposes an SSE-based event model with final usage statistics. The orchestrator should therefore capture
+response metadata, timing, and usage as first-class data rather than incidental logs. 6
+The Execution & Capture layer should normalize every call into a TraceEnvelope with request payload,
+canonicalized response body, streaming event sequence if present, headers, timing metrics, and
+extracted server-reported usage. OpenAI recommends logging x-request-id and exposes rate-limit
+headers; Anthropic’s streaming documentation describes named SSE event types and its error
+documentation notes that oversized requests can be rejected at the Cloudflare layer with 413
+request_too_large ; Gemini’s Interactions API streams step-based events and returns final usage in the
+interaction.completed event. Those provider-specific behaviors are exactly the sort of differentiating
+surface that the system should capture before any normalization throws them away. 7
+3
+
+--- PAGE 4 ---
+The Feature & Fusion layer should remain pure computation. It accepts traces and corpus context and
+returns calibrated branch scores, anomaly scores, mixture scores, and confidence-calibrated reports. The
+Corpus & Evaluation layer should manage versioned fingerprint knowledge, probe template lineage,
+benchmark sets, and contribution review states.
+AstrBot host contracts
+The following contracts are project-local interface contracts for the AstrBot plugin adapter. They are not
+claims about AstrBot internal APIs; they are the recommended plugin-facing interfaces Codex should
+implement.
+interfaceAuditRunRequest{
+target_id:string;
+base_url:string;
+auth_ref:string;
+claimed_provider?:string|null;
+claimed_model?:string|null;
+adapter:"openai_compatible";
+suite:"quick"|"standard"|"deep"|"stability";
+allow_stream:boolean;
+max_concurrency?:number;
+llm_assisted_generation?:boolean;
+llm_assisted_analysis?:boolean;
+page_context?:{
+source:"page_panel"|"command";
+panel_session_id?:string;
+};
+}
+interfaceAuditRunResult{
+audit_id:string;
+status:"queued"|"running"|"completed"|"failed";
+top_candidates:Array<{
+label:string;
+probability:number;
+}>;
+provider_family:string;
+mixture_probability:number;
+proxy_probability:number;
+token_truth_score:number;
+context_truth_score:number;
+spoof_risk_score:number;
+confidence:number;
+key_findings:string[];
+}
+Recommended AstrBot page-panel actions:
+4
+
+--- PAGE 5 ---
+{
+"panel_actions":[
+"open_target",
+"run_audit",
+"refresh_status",
+"inspect_trace",
+"inspect_branch_scores",
+"review_probe_candidates",
+"approve_corpus_entry",
+"export_report"
+],
+"fallback_commands":[
+"/llm-audit run <target_id>",
+"/llm-audit status <audit_id>",
+"/llm-audit report <audit_id>",
+"/llm-audit submit-candidate"
+]
+}
+Target and trace data contracts
+{
+"target":{
+"target_id":"relay-prod-(cid:63153)(cid:63154)",
+"adapter":"openai_compatible",
+"base_url":"https://example.com/v(cid:63154)",
+"auth_ref":"ENV:TARGET_API_KEY",
+"claimed_provider":"openai",
+"claimed_model":"gpt-like",
+"capabilities_hint":{
+"supports_stream":true,
+"supports_tools":true,
+"supports_json_mode":true
+}
+}
+}
+TraceEnvelope:
+audit_id:aud_(cid:63155)(cid:63153)(cid:63155)(cid:63159)_(cid:63153)(cid:63160)_(cid:63153)(cid:63157)_(cid:63153)(cid:63153)(cid:63154)
+probe_id:kb.release_window.compare_(cid:63153)(cid:63153)(cid:63153)(cid:63156)(cid:63154)
+sample_id:7
+request:
+method:POST
+path:/v(cid:63154)/chat/completions
+headers_redacted:
+content-type:application/json
+x-client-request-id:"(cid:63153)ac(cid:63161)b(cid:63154)..."
+json_body_hash:"sha(cid:63155)(cid:63158)(cid:63159):..."
+5
+
+--- PAGE 6 ---
+json_body_preview:{...}
+response:
+status_code:200
+headers:
+x-request-id:"req_..."
+x-ratelimit-limit-requests:"60"
+body_hash:"sha(cid:63155)(cid:63158)(cid:63159):..."
+text_preview:"..."
+usage:
+prompt_tokens:2114
+completion_tokens:682
+cached_tokens:1024
+stream:
+enabled:true
+event_digest:
+-event:message.start
+t_ms:0
+-event:message.delta
+t_ms:84
+-event:message.stop
+t_ms:911
+timings:
+ttfb_ms:84
+total_ms:911
+integrity:
+parse_ok:true
+normalization_warnings:[]
+Community Fingerprint Corpus
+The Community Fingerprint Corpus is the project’s long-lived knowledge asset. It must not be modeled
+as a flat list of “known prompts.” Instead, it should store public facts, boundary claims, provider quirks,
+validated templates, known transformations introduced by compatibility layers, quality statistics for each
+evidence artifact, and negative examples. That design directly responds to the empirical weaknesses of
+static fingerprints observed in substitution, drift, wrapper, and spoofing settings. 8
+Corpus schema
+Entity Required fields Purpose Notes
+Top-level grouping
+such as
+openai_like , Used for coarse
+provider_family id , name , aliases
+anthropic_like , scoring
+google_like ,
+open_source_like
+6
+
+--- PAGE 7 ---
+Entity Required fields Purpose Notes
+id , provider_family_id ,
+Versioned profile
+public_release_window , Stores ranges, not
+model_profile for a model or
+known_context_claims , only exact points
+model family
+known_surface_traits
+id , model_profile_id , Examples: release
+Facts near release
+topic , claim_type , date ordering,
+knowledge_boundary_claim and knowledge
+claim_value , package version
+boundaries
+support_evidence visibility
+Structured Example: empty
+id , surface , field ,
+protocol or system_fingerprint
+protocol_trait expected_behavior ,
+compatibility on Anthropic OpenAI
+confidence
+behavior compatibility
+id , family , template , Never store as plain
+Parametric prompt
+probe_template slots , anti_cache_fields , single-use prompts
+instructions
+safety_class only
+probe_template_id ,
+dataset_version ,
+Offline validation Required before
+probe_validation separation_score ,
+results production use
+stability_score ,
+risk_flags
+id ,
+Examples known Prevents rediscovery
+negative_control template_or_trace_ref ,
+not to discriminate of bad probes
+reason
+id , attack_family ,
+Known attack Derived from
+spoof_pattern symptoms ,
+behaviors spoofing evaluations
+recommended_counterweights
+id , source , captured_at , Reproducible Supports regression
+baseline_trace_pack
+adapter , trace_refs baseline samples and drift studies
+id , artifact_type ,
+submitter , status , Contribution Supports community
+review_item
+automated_checks , workflow state governance
+human_notes
+A practical schema example:
+model_profile:
+id:anthropic.claude_sonnet_family
+provider_family_id:anthropic_like
+aliases:
+-claude-sonnet
+-claude-sonnet-like
+public_release_window:
+earliest:"2025-01-01"
+latest:"2026-12-31"
+7
+
+--- PAGE 8 ---
+known_context_claims:
+-source:official_docs
+value:"(cid:63155)(cid:63153)(cid:63153)k_to_(cid:63154)M_depends_on_model"
+confidence:0.9
+known_surface_traits:
+-kind:openai_compat
+detail:"system/developermessageshoistedintoonesystemmessage"
+confidence:0.95
+-kind:openai_compat
+detail:"usage.prompt_tokens_detailsalwaysempty"
+confidence:0.95
+{
+"probe_template":{
+"id":"kb.release_window.compare",
+"family":"knowledge_boundary",
+"template":"Without browsing, compare the release ordering and likely feature differences
+between {artifact_a} and {artifact_b}. If uncertain, explicitly say so and estimate confidence.",
+"slots":{
+"artifact_a":"public_release_artifact",
+"artifact_b":"public_release_artifact"
+},
+"anti_cache_fields":["nonce_suffix","ordering_flip","style_variant"],
+"safety_class":"benign"
+}
+}
+Official baselines justify several schema fields. Anthropic’s OpenAI compatibility layer documents silent
+ignoring of some fields, prompt hoisting, and empty system_fingerprint ; OpenAI documents request
+IDs, rate-limit headers, and token-counting on /v1/responses/input_tokens ; Gemini documents OpenAI
+compatibility via a changed base_url , exposes model token limits through model metadata, and
+streams step-based Interactions events with final usage. These are precisely the kinds of provider facts
+and protocol traits the corpus should preserve. 9
+Corpus lifecycle
+No RejectRoerviRseiotunrnfor
+CommunitySubmission SchemaValidation DSeidmuiplalricitaytiCohneacnkd SafetyandLeakageScan OfflineBaselineReplay DSistcarbimilitinyaStcioonrinagnd PassThresholds? PeriodicRevalidation
+Yes HumanReview StagingCorpus CanaryDeployment ProduRcetiloenasCeorpus StillStable? No DecayWeightorRetire
+Yes
+Contribution and validation workflow
+Every community contribution should go through automated and human review. Automated review
+should check schema validity, semantic deduplication, safety class, obvious leakage or self-referential
+prompts, answer length bounds, anti-cache parameterization, and initial separation statistics against a
+baseline pack. Human review should focus on interpretability, public verifiability of claims, boundary
+quality, and whether the contribution creates a perverse incentive toward overfitting a particular
+provider snapshot. This workflow is especially important because Stability Monitor shows real endpoint
+8
+
+--- PAGE 9 ---
+behavior changes over time and GhostPrint shows that an attacker can optimize against a known
+fingerprinting regime. 10
+Suggested artifact retirement rules should be explicit. Any probe family whose separation score decays
+below threshold for two consecutive corpus releases, whose false-positive rate rises above a configured
+bound, or whose performance becomes highly provider-region-sensitive should be downweighted or
+retired. Corpus versioning must preserve audit reproducibility: every audit result should record the exact
+corpus version, probe-set version, baseline version, and sampler seed used to generate it.
+Evidence Collection and Dynamic Probe Design
+The system should prioritize evidence sources that are both discriminative and hard to spoof jointly. A
+single strong probe may still be informative, but the system should prefer independent evidence
+bundles that fail differently under wrappers, routing, caching, and imitation attacks. LLMmap supports
+the value of active, carefully chosen probing; KBF supports boundary-oriented questions; Stability
+Monitor supports repeated sampling over time; Invisible Traces supports combining static and dynamic
+signals; LLMs Have Rhythm and the inference-system fingerprinting work show that timing and
+infrastructure leak usable information; and GhostPrint demonstrates why no single branch should
+dominate the final decision. 11
+Prioritized evidence types and initial branch weights
+Suggested prior
+Evidence branch What it measures
+weight
+Long-form natural- Structure, discourse, formatting, uncertainty,
+0.20
+language behavior style, semantic traits under rich tasks
+Knowledge-boundary Stable recall and uncertainty near public release
+0.20
+evidence boundaries
+Tokenizer and Unicode Normalization, escaping, truncation, multilingual
+0.12
+behavior segmentation quirks
+Protocol and Header behavior, field support, error structure,
+0.10
+compatibility semantics event flow
+Structured outputs and JSON adherence, tool-call formatting, schema
+0.08
+tool behavior obedience
+Count-vs-usage consistency, slope consistency,
+Token authenticity 0.07
+cache consistency
+Hard limit, effective recall depth, truncation
+Context authenticity 0.07
+behavior
+Timing and streaming TTFB, chunk cadence, event topology, variance
+0.06
+rhythm patterns
+Refusal and safety
+Refusal openings, alternatives, conservative splits 0.05
+behavior
+Longitudinal stability and Change over time, distribution shifts, mixture
+0.05
+drift persistence
+9
+
+--- PAGE 10 ---
+These weights are priors, not fixed truths. They should be learned and recalibrated from validation data,
+but they reflect a deliberate bias toward branches that are harder to fake together than surface-only
+compatibility checks. 12
+Dynamic probe generation pipeline
+Stage Inputs Operation Output
+Official docs, release
+Candidate fact Build a pool of discriminative Candidate fact
+metadata, corpus claims,
+mining facts and hypotheses set
+past high-value probes
+Choose families and
+Template Probe family quotas, target
+templates using anti- Template batch
+selection profile, recent usage history
+repetition policies
+Fill slots while varying Concrete
+Slot Fact set, nonce bank, decoy
+ordering, wording, and candidate
+instantiation bank, style variants
+distractors probes
+Rewrite for naturalness,
+LLM-assisted Host-configured analysis Rewritten
+safety, and diversity without
+rewrite LLM probes
+changing intent
+Safety rules, leakage
+Static Reject unsafe, leaked,
+detector, duplication Clean probes
+validation repetitive, or trivial probes
+detector
+Estimate separation, stability,
+Baseline traces and official Validated
+Offline replay output length, caching
+endpoints probes
+sensitivity
+Production Audit seed, target history, Select a stratified subset Executable
+sampling corpus version without replacement probe plan
+Post-run Real traces, branch utility Update quality priors and Corpus
+feedback stats retire weak probes updates
+A recommended algorithm:
+defbuild_probe_plan(target, corpus, seed, budget):
+rng = DeterministicRNG(seed)
+families = stratified_quota_assign(
+budget=budget,
+quotas={
+"knowledge_boundary": 0.22,
+"long_form": 0.22,
+"tokenizer_unicode": 0.12,
+"protocol": 0.10,
+"structured_output": 0.08,
+"token_truth": 0.08,
+"context_truth": 0.08,
+"timing": 0.05,
+10
+
+--- PAGE 11 ---
+"refusal": 0.05
+}
+)
+candidates = []
+for family, k in families.items():
+templates = corpus.sample_templates(
+family=family,
+k=5 * k,
+anti_recent=True,
+anti_duplicate=True,
+min_validation_score=0.65
+)
+for template in templates:
+probe = instantiate_template(
+template=template,
+facts=corpus.sample_facts(family, rng),
+nonce=make_nonce(rng),
+decoy=make_decoy(rng),
+order_variant=rng.choice(["normal", "reversed", "shuffled"])
+)
+probe = llm_rewrite_if_enabled(probe)
+if validate_probe_static(probe):
+candidates.append(probe)
+scored = offline_rank(candidates, target_hints=target)
+return scored[:budget]
+Random sampling strategy
+To avoid static probing, the system must never replay the same narrow set of prompts on every run. Use a
+stratified weighted reservoir with three anti-static penalties:
+· a recency penalty against recently used templates;
+· a target exposure penalty against prompts already seen by the same target or target cluster;
+· a cache-risk penalty against probes whose prefixes are too stable across audits.
+For candidate probe i, define selection score
+u = log(quality +ϵ)+λ log(separation +ϵ)+λ log(stability +ϵ)−λ recent_use −λ target_exposure −λ cache_risk
+i i 1 i 2 i 3 i 4 i 5 i
+and sample within each family proportionally to exp(u i ). This keeps strong probes in circulation while
+continuously rotating their concrete realizations. Prompt-caching research shows timing can leak prefix
+reuse and provider behavior, and OpenAI’s prompt caching documentation confirms a cached_tokens
+signal and organization-scoped cache behavior. Those facts make anti-static sampling operationally
+important rather than merely aesthetic. 13
+Long-form natural-language tests
+Short probes remain useful, but the upgraded design should add long-form natural-language tests as a
+first-class branch. These are not arbitrary essay prompts. They should be controlled, composite tasks
+11
+
+--- PAGE 12 ---
+designed to elicit structure, uncertainty calibration, temporal knowledge, formatting preferences, and
+higher-order transformation choices over (cid:63157)(cid:63153)(cid:63153)‒(cid:63154)(cid:63155)(cid:63153)(cid:63153) input tokens, with expected outputs of roughly (cid:63159)(cid:63153)(cid:63153)‒
+(cid:63155)(cid:63158)(cid:63153)(cid:63153) tokens depending on the family.
+Recommended long-form families:
+· Comparative chronology tasks: compare tools, APIs, or releases near known public boundaries
+while discouraging hallucinated certainty.
+· Controlled synthesis tasks: require a constrained structure across sections, JSON fragments,
+bullet limits, and explicit uncertainty notes.
+· Counterfactual correction tasks: plant one or two false premises and measure whether the
+model resists or adopts them.
+· Multi-pass rewriting tasks: ask for initial synthesis, self-check, and revision in one response.
+· Tool-intent and schema tension tasks: ask for textual reasoning plus a lightweight structured
+artifact.
+A template example:
+You are auditing public technical chronology without browsing.
+Write a structured comparison of {artifact_a} and {artifact_b}.
+Requirements:
+- Use exactly four sections: Timeline, Key Differences, What Is Uncertain, Bottom Line.
+- In Timeline, state ordering only if you are confident.
+- In What Is Uncertain, list at least two unknowns or ambiguities.
+- Do not cite web sources or claim you verified anything externally.
+- End with a JSON object:
+{"artifact_a_confidence": <0-100>, "artifact_b_confidence": <0-100>, "hallucination_risk":
+<low|medium|high>}
+Variation seed: {nonce}
+Analysis metrics for long-form tests should include:
+Metric group Examples
+Structural
+section count, heading order, JSON validity, schema violations
+adherence
+Discourse style transition markers, list density, rhetorical hedges, paragraph length
+Uncertainty explicit unknowns, confidence language, contradiction between confidence
+calibration and correctness
+correctness on public-fact anchors, resistance to false premises, near-
+Knowledge quality
+boundary conservatism
+Semantic signature embedding similarity to baselines, cluster stability over repeats
+Editing behavior revision patterns, self-correction location, constraint recovery
+Output rhythm streaming chunk profile, latency, inter-delta variability when available
+12
+
+--- PAGE 13 ---
+These tests should be separately repeated at low and medium temperature, with wording perturbations
+and nonce slots, because the most useful signal is often the distribution of structured behavior across
+repeats, not a single answer. That is directly in line with Stability Monitor’s repeated-sampling logic and
+the side-channel lessons from timing-based fingerprinting. 14
+Detection methods by evidence branch
+Token and protocol detection. OpenAI provides an input-token count endpoint at /v1/responses/
+input_tokens , rate-limit headers, x-request-id , and cached_tokens in prompt-token details. Anthropic
+provides messages.count_tokens , states that token counting is free and separately rate-limited, and
+notes that the count is an estimate. Gemini’s Interactions API returns final usage in the completed
+event, and model metadata exposes inputTokenLimit and outputTokenLimit . These observables
+support three checks: preflight count versus postflight usage consistency, monotonic slope consistency
+across controlled input lengths, and cache-consistency checks under repeated-prefix versus nonce-
+mutated runs. 15
+Protocol legality and compatibility-layer detection. Anthropic’s OpenAI compatibility layer
+documents hoisting of system/developer prompts, unsupported prompt caching, ignored fields, and
+empty system_fingerprint ; Gemini documents OpenAI-library access via a Gemini base URL; OpenAI
+emphasizes headers, request IDs, and event surfaces. Therefore the adapter should test field support,
+unsupported-field handling, message-hoisting signatures, error shape, header presence, and stream
+event topology. A protocol branch should classify not only “looks OpenAI-compatible,” but also
+“looks like OpenAI-compatible Anthropic,” “looks like OpenAI-compatible Gemini,” or “looks like a
+thinner proxy over another implementation.” 16
+Behavioral and refusal detection. Retain the earlier project’s behavioral and refusal-style branches,
+but run them on both short probes and long-form tasks. The classifier should deliberately separate
+“useful behavior” from “identity behavior” so that a wrapper that changes refusal wording but not
+deep structure does not dominate the verdict. Long-form structured compliance, section topology,
+uncertainty handling, and rewrite style should be weighted more than superficial disclaimer text,
+because wrapper prompts can easily alter the latter. This is a direct response to wrapper and spoofing
+risks noted in hybrid fingerprinting and spoofing studies. 17
+Knowledge-boundary detection. The corpus should store public facts and release-ordering claims that
+are stable and verifiable. The detector should ask questions close to the known knowledge boundary,
+score correctness where public anchors exist, and separately score uncertainty behavior. KBF’s key
+insight is that near-boundary numerical recall and inconsistency behavior can distinguish same-surface
+endpoints and detect even minority substitution traffic. The spec should therefore prefer probes that
+measure “what the endpoint knows, what it does not know, and how consistently it admits
+uncertainty,” rather than only raw factual recall. 18
+Tokenizer and Unicode detection. Keep the original token/Unicode family from the previous report and
+expand it. Include zero-width characters, confusable characters, mixed-width punctuation, mixed-script
+prompts, long escaped JSON/XML segments, repeated-token boundaries, emoji sequences, and exact
+roundtrip requests. These cases often survive wrapper prompts because they are rooted in
+preprocessing, tokenizer, escaping, and normalization behavior. The inference-system fingerprinting
+paper further supports the view that subtle implementation differences can propagate into observable
+outputs. 19
+13
+
+--- PAGE 14 ---
+Composite Evidence Fusion, Confidence, and Mixture Detection
+The fusion engine should use a quality-aware calibrated log-opinion pool rather than simple score
+averaging. Let branch m produce a calibrated posterior p m (y ∣ x m ) over labels y, where labels can be
+provider families, model families, or specific candidates, and let each branch also produce:
+· quality q m ∈ [0,1],
+· coverage c m ∈ [0,1],
+· anomaly a m ∈ [0,1],
+· spoof-risk contribution s m ∈ [0,1].
+Define effective branch weight
+α = w ⋅q ⋅c ⋅(1−ρ )
+m m m m m
+where w m is the learned prior branch weight and ρ m is a missingness or corruption penalty.
+The fused score for label y is
+S(y) =
+∑
+α
+m
+log(max(p
+m
+(y ∣ x
+m
+),ε))−λ
+A
+A(y)−λ
+S
+S
+spoof
+−λ
+M
+M
+m
+where:
+· A(y) is a baseline-distance anomaly term,
+· S spoof is a global spoof-risk term,
+· M is a missingness penalty,
+· ε prevents numerical collapse.
+Then compute
+eS(y)
+P(y) =
+∑ eS(y′)
+y′
+and final confidence
+C = IsoCal (P −P )⋅e−η(H(P)+S spoof+M+R mix)
+( (1) (2) )
+where P (1) and P (2) are the top two posterior probabilities, H(P) is posterior entropy, and R mix is
+mixture risk. Calibration should use isotonic or temperature-based post-hoc calibration on held-out
+evaluation sets.
+This formulation is preferable because it tolerates partial observability, lets stronger branches dominate
+only when they are high quality on the current target, and explicitly penalizes anomaly and spoof risk.
+That choice is motivated by the practical evidence that branch reliability varies across targets and that
+spoofing exists as an adaptive adversary. 10
+14
+
+--- PAGE 15 ---
+Mixture and route-substitution detection
+Mixture detection should not be treated as ordinary single-label classification. It should be a latent-
+mixture inference problem over repeated responses to the same semantic task under controlled
+sampling conditions.
+For each repeated probe instance, construct a joint feature vector:
+z = [e ,b ,u ,t ,r ,k ]
+i i i i i i i
+where e i is semantic embedding, b i behavioral structure vector, u i Unicode/tokenizer features, t i timing/
+stream features, r i response-format features, and k i knowledge-boundary outcome features.
+Then:
+1. cluster per-probe repeats using HDBSCAN or a Gaussian mixture;
+2. compare cluster centroids to baseline centroids;
+3. quantify split stability across time and temperature;
+4. compute a mixture score using separation, alternative-baseline affinity, and repeat persistence.
+A practical mixture score is:
+R = σ(β +β ΔBIC+β Sep+β AltAffinity+β TemporalPersistence)
+mix 0 1 2 3 4
+where ΔBIC compares K = 1 and K > 1 cluster models, Sep is inter-cluster separation,
+AltAffinity measures whether different clusters align to different baselines, and TemporalPersistence
+measures whether the split reappears in later runs. KBF’s substitution results strongly support making
+this branch explicit because it can detect mixed routing even at low substitution rates when the
+substituted traffic is sufficiently separated. 18
+Token and context authenticity scoring
+Token authenticity should combine:
+· count-vs-usage consistency where supported;
+· length-gradient slope consistency over (cid:63155)(cid:63158)(cid:63159)/(cid:63158)(cid:63154)(cid:63155)/(cid:63154)(cid:63153)(cid:63155)(cid:63157)/(cid:63155)(cid:63153)(cid:63157)(cid:63161)/... token steps;
+· cache consistency under repeated-prefix and prefix-mutation conditions;
+· behavioral upper bound from what the model demonstrably used.
+OpenAI’s token-count endpoint returns response.input_tokens , OpenAI prompt caching exposes
+cached_tokens , Anthropic provides messages.count_tokens but explicitly notes it is an estimate, and
+Gemini streaming returns final usage with total and cached token fields in the Interactions API example.
+These support a graded authenticity score rather than a brittle pass/fail rule. 20
+Context authenticity should separately score hard limit, effective recall depth, and silent truncation
+risk. Anthropic’s context-window documentation explicitly states that context includes the full request
+plus generated output and warns that more context is not automatically better because of “context
+rot”; it also documents distinct behaviors when the context window is exceeded. Gemini model
+metadata exposes input and output token limits. Therefore a truthful platform can still show degraded
+long-context recall without lying, which means the system must not equate weak recall with fraud. The
+15
+
+--- PAGE 16 ---
+right output is a calibrated context_truth_score plus evidence notes about whether the issue looks like
+normal degradation, soft summarization, or probable truncation. 21
+Evaluation, Privacy, Defaults, and References
+The evaluation harness should be built around reference classes, not just benchmark prompts. At
+minimum it should include: direct official endpoints, official compatibility layers, open-source self-
+hosted endpoints, transparent pass-through relays, wrapper gateways, summarization gateways, mixed-
+routing relays with known proportions, and spoofed or imitation endpoints when feasible. This mirrors
+the scientific threat landscape: LLMmap validates active fingerprinting against many versions, KBF
+validates substitution and mixed routing, Stability Monitor validates longitudinal identity changes, and
+GhostPrint validates adversarial spoofing. 2
+A practical test harness should report:
+· classification metrics: top-(cid:63154) accuracy, macro-F(cid:63154), AUROC by provider family and model family;
+· auditing metrics: mixture detection precision/recall, token-authenticity false-positive and false-
+negative rates, context-authenticity false-positive and false-negative rates;
+· calibration metrics: ECE, Brier score, reliability curves;
+· operational metrics: average probes per audit, average latency per branch, cache-hit rate, and
+drift-detection delay.
+False positives and false negatives should be analyzed by failure mode, not only by label. Useful buckets
+are: compatibility-layer confusion, wrapper-prompt distortion, knowledge-boundary staleness, cache
+contamination, stream metadata loss, and spoofing success. Stability Monitor’s drift framing is
+especially useful here because some apparent false positives are actually evidence that the endpoint
+changed between baseline capture and evaluation. 22
+Privacy and retention defaults
+This system can support real-traffic auditing, but the recommended default should still minimize
+unnecessary exposure. Define the following defaults:
+privacy:
+mode:"probe_only"
+allow_live_traffic_opt_in:true
+redact_headers:true
+redact_api_keys:true
+hash_request_bodies:true
+store_full_text_traces:false
+retention:
+raw_trace_days:30
+derived_feature_days:180
+corpus_entries_ttl_days:0
+benchmark_artifacts_days:365
+These defaults are conservative without disabling the project’s broader capability. They also align with
+the fact that official APIs expose sensitive operational metadata such as request IDs, token counts, and
+headers, and that prompt-caching behavior can create privacy-sensitive timing effects. OpenAI explicitly
+16
+
+--- PAGE 17 ---
+recommends logging request IDs in production; Anthropic documents separate rate limits and request-
+size enforcement; prompt-caching research shows that timing can leak information about prompt reuse.
+23
+Prioritized implementation steps for Codex
+Codex should implement in this order:
+1. Host-agnostic audit core
+2. OpenAI-compatible adapter with full trace capture
+3. Corpus schema and local storage
+4. Dynamic probe sampler and anti-static selection policy
+5. Core branches: protocol, token authenticity, context authenticity, knowledge boundary,
+long-form behavior
+6. Fusion engine with calibration
+7. AstrBot page-panel adapter
+8. Contribution review queue
+9. Longitudinal monitor
+10. Benchmark harness and regression suite
+That sequence front-loads the components that make the system scientifically useful, while delaying UI
+polish and community workflow until the core evidence chain is testable.
+Prioritized references
+The following references should be treated as the primary reading set for implementation and validation:
+· LLMmap: Fingerprinting For Large Language Models — active black-box fingerprinting with a
+small number of interactions. 24
+· KBF: Knowledge Boundary as Fingerprint for Language Model and Black-Box API Auditing —
+knowledge-boundary fingerprinting, substitution auditing, mixed-routing detection. 18
+· Behavioral Fingerprints for LLM Endpoint Stability and Identity — repeated-sampling drift and
+identity monitoring. 25
+· Invisible Traces: Using Hybrid Fingerprinting to identify underlying LLMs in GenAI Apps —
+hybrid static and dynamic evidence. 26
+· LLMs Have Rhythm — timing and traffic as fingerprinting evidence. 27
+· Fingerprinting Inference Systems of Large Language Models — inference-engine, backend, and
+hardware leakage into output behavior. 19
+· Your “Pro” LLM Subscription May Actually Be “Free” — spoofing risks and the limits of
+brittle user-side fingerprinting. 28
+· OpenAI API Reference and Guides — request IDs, rate limits, input-token counting, prompt
+caching. 29
+· Anthropic Claude Platform Docs — OpenAI compatibility behavior, streaming events, token
+counting, context windows, request-size behavior. 30
+· Gemini API Docs — OpenAI compatibility, streaming Interactions events, final usage, model token
+limits. 31
+In short, Codex should build this plugin as a dynamic, corpus-backed, evidence-fusion auditing
+system, not as a static prompt checker. That is the only design in this problem space that meaningfully
+addresses substitution, wrappers, compatibility layers, drift, and spoofing at the same time. 32
+17
+
+--- PAGE 18 ---
+1 3 17 26 Invisible Traces: Using Hybrid Fingerprinting to identify underlying LLMs in GenAI Apps
+https://arxiv.org/abs/(cid:63155)(cid:63158)(cid:63153)(cid:63154).(cid:63154)(cid:63161)(cid:63160)(cid:63154)(cid:63155)?utm_source=chatgpt.com
+2 11 24 LLMmap: Fingerprinting For Large Language Models
+https://arxiv.org/abs/(cid:63155)(cid:63157)(cid:63153)(cid:63160).(cid:63154)(cid:63158)(cid:63161)(cid:63157)(cid:63160)?utm_source=chatgpt.com
+4 8 12 18 32 KBF: Knowledge Boundary as Fingerprint for Language Model and Black-Box API
+Auditing
+https://arxiv.org/abs/(cid:63155)(cid:63159)(cid:63153)(cid:63158).(cid:63155)(cid:63162)(cid:63158)(cid:63155)(cid:63157)?utm_source=chatgpt.com
+5 9 16 30 OpenAI SDK compatibility - Claude Platform Docs
+https://docs.anthropic.com/en/api/openai-sdk
+6 Rate limits | OpenAI API
+https://developers.openai.com/api/docs/guides/rate-limits
+7 23 29 API Overview | OpenAI API Reference
+https://developers.openai.com/api/reference/
+10 14 22 25 Behavioral Fingerprints for LLM Endpoint Stability and Identity
+https://arxiv.org/abs/(cid:63155)(cid:63159)(cid:63153)(cid:63156).(cid:63154)(cid:63162)(cid:63153)(cid:63155)(cid:63155)?utm_source=chatgpt.com
+13 Auditing Prompt Caching in Language Model APIs
+https://arxiv.org/abs/(cid:63155)(cid:63158)(cid:63153)(cid:63155).(cid:63153)(cid:63160)(cid:63160)(cid:63160)(cid:63159)?utm_source=chatgpt.com
+15 20 Get input token counts | OpenAI API Reference
+https://developers.openai.com/api/reference/resources/responses/subresources/input_tokens/methods/count/
+19 Fingerprinting Inference Systems of Large Language Models
+https://arxiv.org/abs/(cid:63155)(cid:63159)(cid:63153)(cid:63158).(cid:63155)(cid:63162)(cid:63162)(cid:63160)(cid:63162)?utm_source=chatgpt.com
+21 Context windows - Claude Platform Docs
+https://docs.anthropic.com/en/docs/build-with-claude/context-windows
+27 LLMs Have Rhythm: Fingerprinting Large Language Models Using Inter-Token Times and Network
+Traffic Analysis
+https://arxiv.org/abs/(cid:63155)(cid:63158)(cid:63153)(cid:63155).(cid:63155)(cid:63153)(cid:63158)(cid:63161)(cid:63162)?utm_source=chatgpt.com
+28 Your "Pro" LLM Subscription May Actually Be "Free": Exposing Fingerprint Spoofing Risks in LLM
+Inference Services
+https://arxiv.org/abs/(cid:63155)(cid:63159)(cid:63153)(cid:63159).(cid:63154)(cid:63159)(cid:63154)(cid:63153)(cid:63153)?utm_source=chatgpt.com
+31 OpenAI compatibility | Gemini API | Google AI for Developers
+https://ai.google.dev/gemini-api/docs/openai
+18

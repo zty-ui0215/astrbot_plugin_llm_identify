@@ -11,7 +11,7 @@ from .corpus import TrustedCorpusSource
 from .evidence import ExternalJudge, PublicKnowledgeSource, auxiliary_judge_prompt, collect_evidence_sources, parse_auxiliary_judgment
 from .features import FingerprintFeatureBundle, MethodFingerprint, TokenAuditFeatures, analyze_fingerprint_traces, analyze_token_traces
 from .models import AuditReport, ProbeResult
-from .probes import FingerprintProbePack, ProtocolProbePack, TokenAuditProbePack
+from .probes import ContextWindowProbePack, FingerprintProbePack, ProtocolProbePack, TokenAuditProbePack
 from .scoring import build_report
 from .scoring.fingerprint import FingerprintFusionResult, fuse_fingerprint_features
 
@@ -21,6 +21,7 @@ class AuditOptions:
     enable_protocol_probe: bool = True
     enable_token_probe: bool = False
     enable_context_probe: bool = False
+    context_probe_target_tokens: int = 4096
     enable_fingerprint_probe: bool = False
     fingerprint_profile: str = "standard"
     fingerprint_repeats: int = 3
@@ -62,6 +63,9 @@ class AuditEngine:
             token_traces = await TokenAuditProbePack().run(self.adapter)
             token_features, token_results = analyze_token_traces(token_traces, language=self.options.language)
             probe_results.extend(token_results)
+
+        if self.options.enable_context_probe:
+            await ContextWindowProbePack(target_tokens=self.options.context_probe_target_tokens).run(self.adapter)
 
         if self.options.enable_fingerprint_probe:
             fingerprint_traces = await FingerprintProbePack(
@@ -109,6 +113,7 @@ class AuditEngine:
             degraded_modes=evidence_run.degraded_modes if evidence_run else [],
             corpus_metadata=evidence_run.corpus_metadata if evidence_run else [],
             strict_mode=self.options.strict_mode,
+            language=self.options.language,
         )
 
     async def _collect_external_evidence(self, bundle: FingerprintFeatureBundle | None):

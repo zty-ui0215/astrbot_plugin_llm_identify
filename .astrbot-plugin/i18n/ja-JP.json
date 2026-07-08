@@ -1,0 +1,50 @@
+{
+  "metadata": {
+    "display_name": "LLM Identify",
+    "short_desc": "確率的 LLM エンドポイント監査。",
+    "desc": "プロトコル、Token、指紋、証拠スコアで AstrBot プロバイダーと OpenAI 互換エンドポイントを監査します。"
+  },
+  "config": {
+    "default_timeout": {"description": "プローブタイムアウト", "hint": "各プローブ要求のタイムアウト秒数です。推奨: 30-120。"},
+    "page_provider_id": {"description": "ページプロバイダー", "hint": "Web パネルで使用するプロバイダー ID です。例: openai-default。空の場合、AstrBot が公開する現在または既定のプロバイダーを使います。"},
+    "enable_protocol_probe": {"description": "プロトコルプローブ", "hint": "プロトコル挙動プローブを有効にします。"},
+    "enable_token_probe": {"description": "Token プローブ", "hint": "Token 計量プローブを既定で有効にします。完全監査では、この値が false でも常に Token プローブを有効にします。"},
+    "enable_fingerprint_probe": {"description": "指紋プローブ", "hint": "LLM 指紋プローブを既定で有効にします。完全監査では、この値が false でも常に指紋プローブを有効にします。"},
+    "fingerprint_profile": {"description": "指紋の幅", "hint": "light | standard | exhaustive"},
+    "fingerprint_repeats": {"description": "反復回数", "hint": "各指紋プローブの反復回数です。推奨: 1-5。高い値は混在ルーティング検出を改善しますが、要求数が増えます。"},
+    "enable_auxiliary_llm_judge": {"description": "補助判定", "hint": "任意の補助 LLM 判定用に予約されています。決定的スコアリングが引き続き基準です。"},
+    "auxiliary_judge_provider_id": {"description": "判定プロバイダー", "hint": "深い指紋照合に使う補助 LLM 判定用 AstrBot プロバイダー ID です。例: openai-judge-provider。空の場合、利用可能なページまたは現在のプロバイダーを使います。"},
+    "enable_context_probe": {"description": "コンテキストプローブ", "hint": "将来のコンテキストウィンドウ番兵プローブ用に予約されています。現在は無効です。"},
+    "strict_mode": {"description": "厳格モード", "hint": "失敗したプローブに、より保守的な信頼度ペナルティを適用します。"}
+  },
+  "pages": {
+    "模型检测面板": {
+      "title": "モデル監査パネル",
+      "description": "エンドポイント監査を実行し、証拠を確認します。",
+      "eyebrow": "LLM IDENTIFY",
+      "heading": "エンドポイント監査",
+      "language": "言語",
+      "refresh": "更新",
+      "provider": "プロバイダー",
+      "claimed_model": "主張モデル",
+      "family_guess": "ファミリー推定",
+      "state": "状態",
+      "risk": "リスク",
+      "run_audit": "監査を実行",
+      "run_hint": "簡易モードはプロトコル挙動を確認します。完全モードは Token 計量と指紋証拠を追加します。",
+      "run": "実行",
+      "audit_mode": "監査モード",
+      "mode_astrbot": "AstrBot プロバイダー - 簡易",
+      "mode_astrbot_full": "AstrBot プロバイダー - 完全指紋",
+      "mode_direct": "直接 OpenAI 互換 - 完全指紋",
+      "astrbot_provider": "AstrBot モデル",
+      "no_models": "利用可能な AstrBot モデルがありません",
+      "base_url": "Base URL",
+      "api_key": "API Key",
+      "model": "モデル",
+      "audit_result": "監査結果",
+      "primary_findings": "主要な検出事項",
+      "text_report": "テキストレポート"
+    }
+  }
+}

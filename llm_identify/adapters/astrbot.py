@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..models import ModelReply, TokenSnapshot
+from .trace_normalization import normalize_reply_meta, normalize_usage
 
 
 def reply_from_astrbot_response(response: Any) -> ModelReply:
@@ -12,7 +13,7 @@ def reply_from_astrbot_response(response: Any) -> ModelReply:
         usage=_extract_usage(response),
         response_id=_string_attr(response, "id"),
         raw_type=type(raw).__name__ if raw is not None else type(response).__name__,
-        meta=_extract_response_meta(response),
+        meta=normalize_reply_meta(_extract_response_meta(response)),
     )
 
 
@@ -42,7 +43,8 @@ def _extract_usage(response: Any) -> TokenSnapshot | None:
     total_tokens = read("total", "total_tokens", "totalTokenCount")
     if total_tokens is None and input_tokens is not None and output_tokens is not None:
         total_tokens = input_tokens + output_tokens
-    return TokenSnapshot(input=input_tokens, output=output_tokens, total=total_tokens)
+    normalized, _ = normalize_usage(_usage_to_dict(usage))
+    return normalized or TokenSnapshot(input=input_tokens, output=output_tokens, total=total_tokens)
 
 
 def _extract_response_meta(response: Any) -> dict[str, Any]:
@@ -97,3 +99,20 @@ def _read_any(obj: Any, key: str) -> Any:
     if isinstance(obj, dict):
         return obj.get(key)
     return getattr(obj, key, None)
+
+
+def _usage_to_dict(usage: Any) -> dict[str, Any]:
+    if usage is None:
+        return {}
+    if isinstance(usage, dict):
+        return dict(usage)
+    values: dict[str, Any] = {}
+    for key in (
+        "input", "output", "total", "prompt_tokens", "completion_tokens", "total_tokens",
+        "input_tokens", "output_tokens", "promptTokenCount", "candidatesTokenCount",
+        "totalTokenCount", "cached_tokens", "cached_input_tokens", "cachedContentTokenCount",
+    ):
+        value = getattr(usage, key, None)
+        if value is not None:
+            values[key] = value
+    return values

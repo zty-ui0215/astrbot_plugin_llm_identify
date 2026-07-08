@@ -90,6 +90,45 @@ button:hover {
   background: var(--accent-dark);
 }
 
+.topbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.secondary-btn {
+  background: var(--surface);
+  color: var(--accent-dark);
+}
+
+.secondary-btn:hover {
+  background: var(--surface-soft);
+}
+
+.language-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.language-control select {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  outline: 0;
+}
+
 button:disabled {
   cursor: wait;
   opacity: 0.62;
@@ -304,6 +343,19 @@ pre {
   .report-head {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .topbar-actions {
+    justify-content: stretch;
+  }
+
+  .topbar-actions button {
+    flex: 1 1 auto;
+  }
+
+  .language-control {
+    flex: 1 1 auto;
+    justify-content: space-between;
   }
 
   .summary-grid {

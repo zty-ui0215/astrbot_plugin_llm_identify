@@ -20,6 +20,7 @@ class TokenAuditFeatures:
     cache_signal_consistency: bool | None
     unicode_count_stability: bool
     output_length_consistency: bool
+    native_count_consistency: bool | None
     anomaly_flags: list[str] = field(default_factory=list)
     evidence: dict[str, Any] = field(default_factory=dict)
 
@@ -70,6 +71,10 @@ def analyze_token_traces(traces: list[Trace], language: str | None = None) -> tu
     if usage_outputs and not output_length_consistency:
         anomaly_flags.append("output_tokens_do_not_track_response_length")
 
+    native_count_consistency, native_count_evidence = _native_count_consistency(token_traces)
+    if native_count_consistency is False:
+        anomaly_flags.append("native_count_disagrees_with_usage")
+
     score = 1.0
     penalties = {
         "usage_missing": 0.42,
@@ -79,6 +84,7 @@ def analyze_token_traces(traces: list[Trace], language: str | None = None) -> tu
         "cache_signal_inconsistent": 0.08,
         "unicode_count_unstable_or_implausible": 0.12,
         "output_tokens_do_not_track_response_length": 0.10,
+        "native_count_disagrees_with_usage": 0.18,
     }
     for flag in anomaly_flags:
         score -= penalties.get(flag, 0.05)
@@ -90,6 +96,7 @@ def analyze_token_traces(traces: list[Trace], language: str | None = None) -> tu
         "prompt_estimates": {trace.probe_id: trace.prompt_estimate for trace in token_traces},
         "latencies_ms": {trace.probe_id: trace.latency_ms for trace in token_traces},
         "slope": slope_evidence,
+        "native_count": native_count_evidence,
     }
     features = TokenAuditFeatures(
         token_truth_score=token_truth_score,
@@ -100,6 +107,7 @@ def analyze_token_traces(traces: list[Trace], language: str | None = None) -> tu
         cache_signal_consistency=cache_signal_consistency,
         unicode_count_stability=unicode_count_stability,
         output_length_consistency=output_length_consistency,
+        native_count_consistency=native_count_consistency,
         anomaly_flags=anomaly_flags,
         evidence=evidence,
     )
@@ -161,6 +169,37 @@ def _output_length_consistency(by_id: dict[str, Trace], usage_outputs: dict[str,
     token_growth = long_usage > short_usage
     return (not text_growth) or token_growth
 
+def _native_count_consistency(traces: list[Trace]) -> tuple[bool | None, dict[str, Any]]:
+    comparisons: list[dict[str, Any]] = []
+    error_count = 0
+    for trace in traces:
+        payload = trace.reply.meta.get("native_token_count") if isinstance(trace.reply.meta.get("native_token_count"), dict) else None
+        if not payload:
+            continue
+        if payload.get("status") != "ok":
+            error_count += 1
+            comparisons.append({"probe_id": trace.probe_id, "status": payload.get("status"), "error": payload.get("error")})
+            continue
+        native = payload.get("input_tokens") or payload.get("total_tokens")
+        reported = trace.usage.input if trace.usage and trace.usage.input is not None else None
+        if native is None or reported is None:
+            comparisons.append({"probe_id": trace.probe_id, "status": "missing_comparable_count", "native": native, "reported": reported})
+            continue
+        try:
+            native_int = int(native)
+            reported_int = int(reported)
+        except (TypeError, ValueError):
+            continue
+        delta = abs(native_int - reported_int)
+        tolerance = max(8, int(max(native_int, reported_int) * 0.18))
+        comparisons.append({"probe_id": trace.probe_id, "status": "ok", "native": native_int, "reported": reported_int, "delta": delta, "tolerance": tolerance, "within_tolerance": delta <= tolerance})
+    comparable = [item for item in comparisons if item.get("status") == "ok"]
+    if not comparisons:
+        return None, {"status": "not_available"}
+    if not comparable:
+        return None, {"status": "not_comparable", "error_count": error_count, "comparisons": comparisons[:12]}
+    pass_rate = sum(1 for item in comparable if item.get("within_tolerance")) / len(comparable)
+    return pass_rate >= 0.75, {"status": "ok", "pass_rate": round(pass_rate, 4), "error_count": error_count, "comparisons": comparisons[:12]}
 
 def _feature_results(features: TokenAuditFeatures, language: str | None = None) -> list[ProbeResult]:
     checks = [
@@ -182,6 +221,18 @@ def _feature_results(features: TokenAuditFeatures, language: str | None = None) 
                 status=status_for_score(score),
                 detail=t(f"token.{name}.ok" if passed else f"token.{name}.bad", language),
                 evidence=features.evidence if name in {"slope_plausibility", "usage_availability"} else {},
+            )
+        )
+    if features.native_count_consistency is not None:
+        native_score = 1.0 if features.native_count_consistency else 0.25
+        results.append(
+            ProbeResult(
+                category="token",
+                name="native_count_consistency",
+                score=native_score,
+                status=status_for_score(native_score),
+                detail="Provider-native token count endpoint agrees with usage metadata." if features.native_count_consistency else "Provider-native token count endpoint disagrees with usage metadata.",
+                evidence=features.evidence.get("native_count", {}),
             )
         )
     cache_score = 0.75 if features.cache_signal_consistency is None else (1.0 if features.cache_signal_consistency else 0.45)

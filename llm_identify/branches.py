@@ -98,12 +98,89 @@ def _context_truth_branch(traces: list[Trace]) -> BranchEvidence:
     context_traces = [trace for trace in traces if "context" in trace.probe_id or trace.category == "context"]
     if not context_traces:
         return BranchEvidence("context_truth", 0.65, 0.25, 0.75, {"status": "not_probed"}, ["context_probe"])
-    joined = "\n".join(trace.reply.text.lower() for trace in context_traces)
-    sentinel_hits = joined.count("ctx-sentinel") + joined.count("sentinel")
-    refusal_hits = sum(joined.count(marker) for marker in ("cannot", "unknown", "not enough context"))
-    score = clamp(0.35 + sentinel_hits * 0.25 - refusal_hits * 0.05)
-    return BranchEvidence("context_truth", round(score, 4), 0.7, 0.0, {"sentinel_hits": sentinel_hits, "refusal_hits": refusal_hits}, ["context_probe"])
 
+    expected_total = 0
+    recalled_total = 0
+    per_probe: list[dict[str, Any]] = []
+    json_like = 0
+    refusal_hits = 0
+    truncation_hits = 0
+    for trace in context_traces:
+        expected = _expected_context_sentinels(trace)
+        expected_total += len(expected)
+        lower_reply = trace.reply.text.lower()
+        recalled = [sentinel for sentinel in expected if sentinel.lower() in lower_reply]
+        recalled_total += len(recalled)
+        parsed = _json_object_from_text(trace.reply.text)
+        if parsed is not None:
+            json_like += 1
+        refusal = sum(lower_reply.count(marker) for marker in ("cannot", "unknown", "not enough context", "too long", "context length"))
+        refusal_hits += refusal
+        finish_reason = str(trace.reply.meta.get("finish_reason") or trace.reply.meta.get("stop_reason") or "").lower()
+        if finish_reason in {"length", "max_tokens", "context_length_exceeded"} or "truncated" in lower_reply:
+            truncation_hits += 1
+        per_probe.append(
+            {
+                "probe_id": trace.probe_id,
+                "expected": expected,
+                "recalled": recalled,
+                "missing": [sentinel for sentinel in expected if sentinel not in recalled],
+                "json_object": parsed is not None,
+                "finish_reason": finish_reason or None,
+            }
+        )
+
+    recall = recalled_total / max(1, expected_total)
+    json_rate = json_like / max(1, len(context_traces))
+    position_coverage = sum(1 for item in per_probe if item["recalled"]) / max(1, len(per_probe))
+    penalty = min(0.35, refusal_hits * 0.04 + truncation_hits * 0.12)
+    score = clamp(0.15 + recall * 0.62 + json_rate * 0.10 + position_coverage * 0.13 - penalty)
+    confidence = clamp(0.45 + min(0.35, len(context_traces) * 0.10) + min(0.15, expected_total * 0.02))
+    return BranchEvidence(
+        "context_truth",
+        round(score, 4),
+        round(confidence, 4),
+        0.0,
+        {
+            "expected_sentinels": expected_total,
+            "recalled_sentinels": recalled_total,
+            "sentinel_recall": round(recall, 4),
+            "json_response_rate": round(json_rate, 4),
+            "position_coverage": round(position_coverage, 4),
+            "refusal_hits": refusal_hits,
+            "truncation_hits": truncation_hits,
+            "per_probe": per_probe,
+        },
+        ["context_probe", "trace_text"],
+    )
+
+def _expected_context_sentinels(trace: Trace) -> list[str]:
+    # Trace intentionally does not retain raw prompts; map the built-in probe ids to their expected sentinels.
+    if trace.probe_id == "context_short_sentinel":
+        values = ["CTX-SENTINEL-SHORT"]
+    elif trace.probe_id == "context_window_sentinels":
+        values = ["CTX-SENTINEL-EARLY", "CTX-SENTINEL-MIDDLE", "CTX-SENTINEL-LATE"]
+    elif trace.probe_id == "context_boundary_pressure":
+        values = ["CTX-SENTINEL-EARLY", "CTX-SENTINEL-LATE"]
+    else:
+        values = re.findall(r"CTX-SENTINEL-[A-Z0-9-]+", trace.reply.text)
+    return list(dict.fromkeys(values))
+
+
+def _json_object_from_text(text: str) -> dict[str, Any] | None:
+    stripped = text.strip()
+    candidates = [stripped]
+    match = re.search(r"\{.*\}", stripped, re.DOTALL)
+    if match:
+        candidates.append(match.group(0))
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except Exception:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
 
 def _timing_branch(traces: list[Trace]) -> BranchEvidence:
     latencies = [trace.latency_ms for trace in traces if trace.latency_ms >= 0]

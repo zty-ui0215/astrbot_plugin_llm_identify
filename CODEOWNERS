@@ -1,0 +1,6 @@
+schemas/** @maintainers
+docs/trusted_corpus_governance.md @maintainers
+llm_identify/data/trusted_reference_corpus.json @maintainers
+llm_identify/corpus_validation.py @maintainers
+llm_identify/contribution/** @maintainers
+.github/workflows/validate-trusted-corpus.yml @maintainers

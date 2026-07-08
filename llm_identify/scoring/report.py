@@ -6,7 +6,9 @@ from typing import Any
 from ..capture import Trace, build_trace_summary
 from ..features import TokenAuditFeatures
 from ..models import AuditReport, ProbeResult
+from ..mixture import detect_mixture_or_provider_switching
 from .fingerprint import FingerprintFusionResult
+from ..i18n import t
 from ..utils import clamp, detect_model_family
 
 
@@ -28,6 +30,7 @@ def build_report(
     degraded_modes: list[str] | None = None,
     corpus_metadata: list[dict[str, Any]] | None = None,
     strict_mode: bool = False,
+    language: str | None = None,
 ) -> AuditReport:
     model_family = detect_model_family(claimed_model, provider_id)
     protocol_score = _category_score(probe_results, "protocol")
@@ -43,10 +46,11 @@ def build_report(
         confidence -= 0.05 * sum(1 for item in probe_results if item.status == "fail")
     confidence = round(clamp(confidence), 4)
     proxy_probability = _proxy_probability(protocol_value, token_features, fingerprint_result, traces)
-    mixture_probability = _mixture_probability(probe_results, token_features, fingerprint_result)
+    mixture_detection = detect_mixture_or_provider_switching(probe_results=probe_results, traces=traces, token_features=token_features, fingerprint_result=fingerprint_result)
+    mixture_probability = mixture_detection.probability
     prompt_injection_risk = 0.0 if prompt_injection_risk is None else prompt_injection_risk
     drift_risk = _drift_risk(branch_evidence or [])
-    findings = _findings(protocol_score, token_features, fingerprint_result, proxy_probability, mixture_probability, degraded_modes)
+    findings = _findings(protocol_score, token_features, fingerprint_result, proxy_probability, mixture_probability, degraded_modes, mixture_detection.findings, language)
     risk_level = _risk_level(confidence, proxy_probability, token_truth_score, fingerprint_result.spoofing_risk if fingerprint_result else None, prompt_injection_risk, drift_risk)
     identity = _provider_probabilities(model_family, confidence, fingerprint_result)
     authenticity = {
@@ -86,7 +90,7 @@ def build_report(
         mixture_probability=mixture_probability,
         confidence=confidence,
         risk_level=risk_level,
-        risk_analysis={"proxy_probability": proxy_probability, "mixture_probability": mixture_probability, "prompt_injection_risk": prompt_injection_risk, "drift_risk": drift_risk},
+        risk_analysis={"proxy_probability": proxy_probability, "mixture_probability": mixture_probability, "prompt_injection_risk": prompt_injection_risk, "drift_risk": drift_risk, "mixture_signals": mixture_detection.signals},
         evidence_summary=_evidence_summary(probe_results),
         findings=findings,
         probe_results=probe_results,
@@ -100,58 +104,58 @@ def build_report(
     )
 
 
-def format_text_report(report: AuditReport) -> str:
+def format_text_report(report: AuditReport, language: str | None = None) -> str:
     lines = [
-        "LLM Identify Audit Report",
-        f"Provider ID: {report.provider_id}",
-        f"Claimed model: {report.claimed_model}",
-        f"Adapter: {report.adapter_type}",
-        f"Model family guess: {report.model_family_guess}",
-        f"Confidence: {report.confidence:.0%}",
-        f"Risk level: {report.risk_level}",
-        f"Proxy probability: {report.proxy_probability:.0%}",
-        f"Mixture probability: {report.mixture_probability:.0%}",
+        t("report.title", language),
+        f"{t('report.provider_id', language)}: {report.provider_id}",
+        f"{t('report.claimed_model', language)}: {report.claimed_model}",
+        f"{t('report.adapter', language)}: {report.adapter_type}",
+        f"{t('report.model_family', language)}: {report.model_family_guess}",
+        f"{t('report.confidence', language)}: {report.confidence:.0%}",
+        f"{t('report.risk_level', language)}: {report.risk_level}",
+        f"{t('report.proxy_probability', language)}: {report.proxy_probability:.0%}",
+        f"{t('report.mixture_probability', language)}: {report.mixture_probability:.0%}",
     ]
     if report.protocol_score is not None:
-        lines.append(f"Protocol score: {report.protocol_score:.0%}")
+        lines.append(f"{t('report.protocol_score', language)}: {report.protocol_score:.0%}")
     if report.token_truth_score is not None:
-        lines.append(f"Token truth score: {report.token_truth_score:.0%}")
+        lines.append(f"{t('report.token_truth_score', language)}: {report.token_truth_score:.0%}")
     if report.fingerprint_confidence is not None:
-        lines.append(f"Fingerprint confidence: {report.fingerprint_confidence:.0%}")
+        lines.append(f"{t('report.fingerprint_confidence', language)}: {report.fingerprint_confidence:.0%}")
     if report.spoofing_risk is not None:
-        lines.append(f"Spoofing risk: {report.spoofing_risk:.0%}")
+        lines.append(f"{t('report.spoofing_risk', language)}: {report.spoofing_risk:.0%}")
     if report.context_truth_score is not None:
-        lines.append(f"Context truth score: {report.context_truth_score:.0%}")
+        lines.append(f"{t('report.context_truth_score', language)}: {report.context_truth_score:.0%}")
     if report.prompt_injection_risk is not None:
-        lines.append(f"Prompt injection risk: {report.prompt_injection_risk:.0%}")
+        lines.append(f"{t('report.prompt_injection_risk', language)}: {report.prompt_injection_risk:.0%}")
     if report.fingerprint_database_status:
         empty = [name for name, count in report.fingerprint_database_status.items() if count == 0]
-        lines.append(f"Fingerprint databases empty: {len(empty)}")
+        lines.append(f"{t('report.fingerprint_databases_empty', language)}: {len(empty)}")
     if report.degraded_modes:
-        lines.append(f"Degraded modes: {len(report.degraded_modes)}")
+        lines.append(f"{t('report.degraded_modes_count', language)}: {len(report.degraded_modes)}")
     if report.corpus_metadata:
         versions = sorted({str(item.get("corpus_version", "unknown")) for item in report.corpus_metadata})
-        lines.append(f"Corpus versions: {', '.join(versions)}")
-    lines.extend(["", "Identity posterior:"])
+        lines.append(f"{t('report.corpus_versions', language)}: {', '.join(versions)}")
+    lines.extend(["", t("report.identity_posterior", language)])
     for name, value in sorted(report.identity_posterior.items(), key=lambda item: item[1], reverse=True):
         lines.append(f"- {name}: {value:.0%}")
-    lines.extend(["", "Authenticity posterior:"])
+    lines.extend(["", t("report.authenticity_posterior", language)])
     for name, value in sorted(report.authenticity_posterior.items(), key=lambda item: item[1], reverse=True):
         lines.append(f"- {name}: {value:.0%}")
-    lines.extend(["", "Security posterior:"])
+    lines.extend(["", t("report.security_posterior", language)])
     for name, value in sorted(report.security_posterior.items(), key=lambda item: item[1], reverse=True):
         lines.append(f"- {name}: {value:.0%}")
     if report.fingerprint_candidates:
-        lines.extend(["", "Fingerprint candidates:"])
+        lines.extend(["", t("report.fingerprint_candidates", language)])
         for candidate in report.fingerprint_candidates:
-            methods = ", ".join(candidate.methods) if candidate.methods else "no direct method wins"
+            methods = ", ".join(candidate.methods) if candidate.methods else t("report.no_direct_method_wins", language)
             lines.append(f"- {candidate.name}: {candidate.confidence:.0%} ({methods})")
-    lines.extend(["", "Evidence summary:"])
+    lines.extend(["", t("report.evidence_summary", language)])
     summary = report.evidence_summary or {}
-    lines.append(f"- Supporting: {len(summary.get('supporting_evidence', []))}")
-    lines.append(f"- Contradicting: {len(summary.get('contradicting_evidence', []))}")
-    lines.append(f"- Unknown: {len(summary.get('unknown_evidence', []))}")
-    lines.extend(["", "Evidence sources:"])
+    lines.append(f"- {t('report.supporting', language)}: {len(summary.get('supporting_evidence', []))}")
+    lines.append(f"- {t('report.contradicting', language)}: {len(summary.get('contradicting_evidence', []))}")
+    lines.append(f"- {t('report.unknown', language)}: {len(summary.get('unknown_evidence', []))}")
+    lines.extend(["", t("report.evidence_sources", language)])
     if report.evidence_sources:
         for source in report.evidence_sources:
             source_id = getattr(source, "source_id", "unknown")
@@ -159,39 +163,39 @@ def format_text_report(report: AuditReport) -> str:
             source_type = getattr(source, "source_type", "unknown")
             lines.append(f"- {source_id} ({source_type}): {status}")
     else:
-        lines.append("- No external evidence sources configured.")
+        lines.append(f"- {t('report.no_external_sources', language)}")
     if report.corpus_metadata:
-        lines.extend(["", "Trusted corpus:"])
+        lines.extend(["", t("report.trusted_corpus", language)])
         for item in report.corpus_metadata:
             source_id = item.get("source_id", "unknown")
             corpus_version = item.get("corpus_version", "unknown")
             schema_version = item.get("schema_version", "unknown")
             status = item.get("status", "unknown")
-            lines.append(f"- {source_id}: version {corpus_version}, schema {schema_version}, status {status}")
+            lines.append(f"- {source_id}: {t('report.corpus_line', language, corpus_version=corpus_version, schema_version=schema_version, status=status)}")
     if report.judge_invocations:
-        lines.extend(["", "External judge invocations:"])
+        lines.extend(["", t("report.external_judges", language)])
         for invocation in report.judge_invocations:
             model = getattr(invocation, "model", "unknown")
             status = getattr(invocation, "execution_status", "unknown")
             lines.append(f"- {model}: {status}")
     if report.degraded_modes:
-        lines.extend(["", "Degraded modes:"])
+        lines.extend(["", t("report.degraded_modes", language)])
         for item in report.degraded_modes:
             lines.append(f"- {item}")
-    lines.extend(["", "Findings:"])
-    for finding in report.findings or ["No major findings."]:
+    lines.extend(["", t("report.findings", language)])
+    for finding in report.findings or [t("report.no_findings", language)]:
         lines.append(f"- {finding}")
-    lines.extend(["", "Probe results:"])
+    lines.extend(["", t("report.probe_results", language)])
     for item in report.probe_results:
         lines.append(f"- [{item.category}] {item.name}: {item.status}, {item.detail}")
         if item.sample:
-            lines.append(f"  Sample: {item.sample}")
+            lines.append(f"  {t('report.sample', language)}: {item.sample}")
     lines.extend(
         [
             "",
-            "Notes:",
-            "- This report is a probabilistic black-box audit, not proof of model identity.",
-            "- Relays can wrap prompts, rewrite usage, cache responses, spoof style, or route traffic dynamically.",
+            t("report.notes", language),
+            f"- {t('report.note_probabilistic', language)}",
+            f"- {t('report.note_relays', language)}",
         ]
     )
     return "\n".join(lines)
@@ -272,27 +276,30 @@ def _findings(
     proxy_probability: float,
     mixture_probability: float,
     degraded_modes: list[str] | None = None,
+    mixture_findings: list[str] | None = None,
+    language: str | None = None,
 ) -> list[str]:
     findings: list[str] = []
     if protocol_score is not None and protocol_score < 0.65:
-        findings.append("Protocol behavior diverges from the claimed endpoint surface.")
+        findings.append(t("finding.protocol_diverges", language))
     if token_features:
         if not token_features.usage_available:
-            findings.append("Most token probes did not expose usable token metadata.")
+            findings.append(t("finding.token_missing", language))
         if token_features.constant_count_detected:
-            findings.append("Reported token counts are constant or nearly constant across varied prompts.")
+            findings.append(t("finding.token_constant", language))
         if not token_features.input_token_monotonic and token_features.usage_available:
-            findings.append("Reported input tokens do not increase with controlled prompt length.")
+            findings.append(t("finding.token_not_monotonic", language))
         if token_features.token_truth_score < 0.6:
-            findings.append("Token accounting evidence is weak or inconsistent.")
+            findings.append(t("finding.token_weak", language))
     if fingerprint_result:
         findings.extend(fingerprint_result.findings)
     if proxy_probability >= 0.65:
-        findings.append("Proxy, wrapper, or relay behavior is plausible based on observable evidence.")
+        findings.append(t("finding.proxy_plausible", language))
     if mixture_probability >= 0.45:
-        findings.append("Mixed routing remains plausible; repeat sampling is recommended.")
+        findings.append(t("finding.mixture_plausible", language))
+    findings.extend(mixture_findings or [])
     if degraded_modes:
-        findings.append("One or more external evidence sources degraded; confidence is based on the remaining available evidence.")
+        findings.append(t("finding.degraded", language))
     return findings
 
 

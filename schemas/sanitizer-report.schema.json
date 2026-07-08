@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sanitizer-report.schema.json",
+  "title": "LLM Identify sanitizer report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "sanitizer_version",
+    "raw_text_uploaded",
+    "forbidden_fields_found",
+    "rules_applied"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+"},
+    "sanitizer_version": {"type": "string", "minLength": 1},
+    "raw_text_uploaded": {"type": "boolean"},
+    "forbidden_fields_found": {"type": "array", "items": {"type": "string"}},
+    "rules_applied": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "timestamp_bucket_utc": {"type": "string"},
+    "notes": {"type": "string"}
+  }
+}

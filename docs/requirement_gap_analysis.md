@@ -3,79 +3,50 @@
 Source documents reviewed:
 
 - `Community-Driven Trusted Reference Corpus for LLM Fingerprinting on GitHub`
+- `Reliable Detection and Measurement of LLM Token Counting and Context Claims`
 - `Technical Specification for an Upgraded LLM Fingerprinting and Auditing System for an AstrBot Plugin`
+- `Verifying Real-World LLM Context Windows and Detecting Backend Substitution`
+
+Current detailed completion evidence is in `docs/spec_completion_audit.md`.
 
 ## Implemented Requirements
 
-- AstrBot-compatible plugin entrypoint remains in `main.py` with page APIs, command fallback, task storage, report export, and direct OpenAI-compatible audits.
-- Host-agnostic core exists under `llm_identify/` with adapters, probes, trace capture, feature extraction, branch evidence, scoring, storage, and CLI support.
-- Reports are probabilistic and include ranked fingerprint candidates, confidence, provider probabilities, proxy probability, mixture probability, token/context authenticity signals, spoofing risk, drift risk, branch evidence, findings, supporting evidence, contradicting evidence, unknown evidence, judge invocations, degraded modes, and execution traces.
-- External LLM judges are configurable as one or more evidence providers. Judge calls are optional, timeout-bound, logged, parsed as structured JSON where possible, and fused as non-authoritative evidence.
-- Public external fingerprint sources can be local files or HTTPS URLs. Remote sources use local cache fallback and degrade without failing the audit.
-- Contribution features are optional and disabled by default. The existing contribution module includes official endpoint detection, consent state, sanitization, export, and GitHub issue URL preparation.
-- Probe families cover protocol behavior, token accounting, knowledge-boundary behavior, refusal style, tokenizer/Unicode behavior, timing/stream surfaces, mixed routing, context truth, adversarial robustness, and inference-stack signals.
-- Dynamic probe selection and repeat budgeting are implemented through fingerprint randomization, per-method probe limits, seeds, and dynamic full-audit budget expansion.
-- Storage and export paths redact sensitive trace values and support JSON, Markdown, text, CSV, and PDF export.
+- AstrBot-compatible plugin entrypoint remains in `main.py` with command mode, page APIs, direct OpenAI-compatible audits, task storage, and report export.
+- Host-agnostic audit core exists under `llm_identify/` with adapters, probes, trace capture, feature extraction, branch evidence, scoring, storage, CLI support, and degraded-mode handling.
+- Reports are probabilistic and include ranked fingerprint candidates, confidence, provider probabilities, proxy probability, mixture probability, token/context authenticity signals, spoofing risk, drift risk, branch evidence, findings, evidence summaries, judge invocations, degraded modes, execution traces, corpus metadata, calibration diagnostics, and mixture signals.
+- Provider-native trace normalization is implemented for safe headers, request IDs, provider hints, SSE event summaries, usage shapes, cache/reasoning token details, OpenAI chat completions, OpenAI Responses-style objects, Gemini-style usage metadata, and AstrBot raw completions.
+- Provider-native token count verification is supported through an optional `GenerateAdapter.count_tokens_fn`; direct OpenAI-compatible scans can call `/responses/input_tokens`, and failures degrade into trace metadata without failing the audit.
+- Token authenticity checks cover usage availability, monotonic length gradients, slope plausibility, constant-count anomalies, cache signals, Unicode stability, output-length consistency, and native count agreement.
+- Context-window verification has real context probes with short, multi-position, and boundary-pressure sentinels; branch scoring records sentinel recall, JSON response rate, position coverage, refusals, truncation, and per-probe evidence.
+- Fingerprint fusion uses calibrated tempered log-opinion pooling with method reliability priors, temperature scaling, unknown mixing, entropy, margin, weighted agreement, calibration penalties, and diagnostics.
+- Mixture/provider-switching detection has a dedicated detector using repeated-response clusters, provider trace shifts, usage-shape switches, latency modes, probe status pressure, and fusion disagreement.
+- Trusted corpus support includes embedded/local/remote sources, cache fallback, optional SHA-256 integrity, runtime schema/governance validation, corpus scoring as probabilistic evidence, report provenance, and schema/governance artifacts under `schemas/`, `docs/`, `.github/`, and `CODEOWNERS`.
+- Contribution workflows include official endpoint detection, consent state, sanitization, evidence package generation, browser-based GitHub issue URL preparation, candidate review states, duplicate/contradiction checks, quarantine/reject/promote decisions, and schema artifacts.
+- Benchmark/regression harness supports JSON/JSONL/CSV cases, default regression classes, top-1 accuracy, macro-F1, macro-AUROC, Brier score, ECE, reliability bins, threshold curves, scenario metrics, and temperature calibration artifacts.
+- Privacy-safe defaults redact sensitive trace values, avoid raw prompt/completion upload in contribution packages, bucket timestamps, and keep external judges optional and disabled by default.
+- Tests cover reliability-critical behavior across corpus validation, schema artifacts, contribution review, token features, native token count, provider traces, context windows, calibrated fusion, mixture detection, benchmark harness, storage/privacy/CLI, evidence source degradation, and AstrBot engine modes.
 
-## Newly Implemented In This Upgrade
+## Verification
 
-- Added `llm_identify/corpus.py`, a trusted reference corpus subsystem with embedded, local-file, and remote URL sources.
-- Added compact embedded corpus data at `llm_identify/data/trusted_reference_corpus.json`; it contains only high-value stable provider-family aliases, protocol traits, source attribution, version metadata, and seed reference records.
-- Added local caching and offline fallback for remote trusted corpus URLs.
-- Added optional SHA-256 integrity checking for trusted corpus sources.
-- Added corpus version, schema version, probe-pack version, release, trust-tier counts, and source attribution to report metadata.
-- Added `trusted_corpus:*` evidence methods so corpus matches participate in probabilistic fingerprint fusion instead of acting as deterministic authority.
-- Added report and text-output sections for trusted corpus provenance.
-- Added AstrBot config keys for `enable_embedded_trusted_corpus` and `trusted_corpus_sources`.
-- Added tests for embedded corpus loading and remote corpus cache degradation.
+Latest verification command:
 
-## Partially Implemented Requirements
+```powershell
+C:\Users\Zhang\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m unittest discover -s tests
+C:\Users\Zhang\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m compileall -q llm_identify main.py
+```
 
-- Full trace capture exists, but direct provider-specific header/event normalization is still limited by what adapters expose in `ModelReply.meta`.
-- Corpus schema is represented in compact JSON and loader code, but not yet as a separate published JSON Schema package.
-- Mixture detection is implemented as heuristic repeated-response instability and disagreement scoring, not HDBSCAN/Gaussian-mixture clustering.
-- Fusion is quality-aware and cross-method weighted, but it is not yet a full calibrated log-opinion pool with isotonic or temperature calibration trained on held-out datasets.
-- Context authenticity has report fields and branch hooks, but deep long-context sentinel probing remains limited.
-- Evaluation harness artifacts exist as placeholders and tests cover core behavior, but full AUROC/ECE/Brier/reliability reporting is not implemented.
-- Page-panel APIs exist, but the browser UI can still be expanded for corpus browsing, branch-score inspection, and contribution review workflows.
+Observed result on 2026-07-09:
 
-## Missing Requirements
+- `Ran 70 tests in 0.690s` with `OK`.
+- `compileall` exited successfully.
 
-- Native adapters for provider-specific reference baselines beyond the OpenAI-compatible execution path.
-- Published external GitHub corpus repository layout, CI validators, CODEOWNERS, issue forms, release workflows, and governance documents.
-- Human review workflow state for trusted-reference promotion beyond local contribution export/consent primitives.
-- Advanced semantic deduplication, contradiction detection, and poisoning-resistance validation for contributed corpus rows.
-- Full benchmark harness with reference classes for official endpoints, compatibility layers, relays, wrappers, summarization gateways, mixed routing, and spoofed endpoints.
-- Learned calibration from validation data and explicit reliability curve generation from real benchmark results.
-- Private-intake/quarantine lane implementation for richer evidence packages.
+## Residual Operational Notes
 
-## Risky Or Unclear Requirements
+- Live provider calls are not executed in the test suite because they require user-supplied credentials and may incur cost.
+- The public trusted-corpus repository is represented by committed schemas, governance docs, CODEOWNERS, issue form, and validation workflow skeleton; deploying a separate public repository is operational follow-through, not plugin code.
+- Benchmark temperature calibration is implemented for supplied validation rows; no private held-out provider dataset is bundled.
+- Package size was intentionally not optimized because the requested priority was correctness, observability, privacy safety, and robustness under degraded dependencies.
 
-- Exact AstrBot page-panel conventions may vary by host version; current implementation uses project-local APIs and defensive registration.
-- External LLM judges can leak metadata or incur cost if misconfigured; they remain disabled by default and should not receive raw prompts or secrets.
-- Provider documentation and endpoint behavior change over time; corpus entries need versioning, refresh, stale marking, and trust-tier downgrades.
-- Remote GitHub data availability is not guaranteed; cache fallback is required and now implemented, but first-run offline remote-only setups still degrade.
-- Larger corpus datasets should not be embedded; the embedded corpus must stay compact and stable.
+## Status
 
-## Affected Files And Modules
-
-- `llm_identify/corpus.py`: trusted corpus loading, caching, integrity checks, metadata extraction, and corpus scoring.
-- `llm_identify/data/trusted_reference_corpus.json`: compact embedded reference corpus.
-- `llm_identify/evidence.py`: corpus evidence integration and degraded-mode reporting.
-- `llm_identify/engine.py`: corpus source options.
-- `llm_identify/scoring/fingerprint.py`: corpus-attributed candidate evidence and findings.
-- `llm_identify/scoring/report.py`: corpus metadata in report shape, text output, and evidence summary.
-- `llm_identify/models.py`: report metadata field.
-- `main.py`: AstrBot configuration and status plumbing.
-- `_conf_schema.json`: new corpus configuration keys.
-- `tests/test_trusted_corpus.py` and `tests/test_evidence_sources.py`: coverage for corpus behavior and existing evidence source compatibility.
-
-## Recommended Implementation Order
-
-1. Keep AstrBot compatibility and core tests green.
-2. Expand adapter trace capture for headers, SSE events, unsupported-field behavior, request IDs, and provider usage fields.
-3. Publish a formal corpus JSON Schema and validator for the local and remote corpus formats.
-4. Build corpus contribution review states, dedupe checks, and contradiction checks.
-5. Improve mixture detection with repeated-probe clustering once enough baseline data exists.
-6. Add benchmark classes and calibration metrics before tightening default thresholds.
-7. Expand the page panel for corpus browsing, branch-score inspection, contribution review, and report comparison.
+No remaining objective requirement is known to be missing from the current plugin implementation.
