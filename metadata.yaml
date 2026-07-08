@@ -2,7 +2,7 @@ name: astrbot_plugin_llm_identify
 display_name: LLM Identify
 desc: Probabilistic LLM endpoint audit for protocol behavior, token accounting, fingerprinting, and relay risk.
 description: Audits the current AstrBot provider or a direct OpenAI-compatible endpoint with synthetic probes, token verification, cross-method fingerprinting, and evidence-based scoring.
-version: 0.6.0
+version: 0.0.7
 author: zty-ui0215
 repo: https://github.com/zty-ui0215/astrbot_plugin_llm_identify
 category: AI Tools
