@@ -5,7 +5,8 @@ from typing import Any
 from urllib.parse import urlencode
 
 
-DEFAULT_ISSUE_URL = "https://github.com/astrbot-community/llm-identify-trusted-references/issues/new"
+DEFAULT_REPOSITORY = "zty-ui0215/llm-identify-trusted-references"
+DEFAULT_ISSUE_URL = f"https://github.com/{DEFAULT_REPOSITORY}/issues/new"
 
 
 def build_github_issue_url(package: dict[str, Any], issue_url: str = DEFAULT_ISSUE_URL) -> str:

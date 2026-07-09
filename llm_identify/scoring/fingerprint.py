@@ -145,6 +145,8 @@ def _method_reliability(method: MethodFingerprint) -> float:
         base = 0.72
     elif name in {"mixed_routing", "sampling_distribution", "adversarial_robustness"}:
         base = 0.68
+    elif name == "scientific_probe_design":
+        base = 0.6
     elif name in {"embedding_fingerprint", "static_scan"}:
         base = 0.55
     if method.evidence.get("error"):

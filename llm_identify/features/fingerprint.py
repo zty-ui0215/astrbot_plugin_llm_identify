@@ -85,6 +85,7 @@ def _score_rule_method(method: str, traces: list[Trace], rule: FeatureRule, data
         quality=quality,
         evidence={
             "responses": len(texts),
+            "sample_responses": texts[:3],
             "marker_hits": marker_hits,
             "evidence_hits": evidence_hits,
             **computed,
@@ -130,6 +131,21 @@ def _computed_method_evidence(method: str, traces: list[Trace], joined: str, dat
             "unique_response_count": unique_count,
             "instability_ratio": round(instability, 4),
             "family_score_boosts": {"open_source_or_relay": 0.8 if instability > 0.6 else 0.0, "openai_like": 0.25 if instability <= 0.3 and normalized else 0.0},
+        }
+    if method == "scientific_probe_design":
+        control_markers = _count(joined, ("control", "variable", "hypothesis", "rubric", "replicate", "random", "bias"))
+        standard_markers = _count(joined, ("json", "schema", "criterion", "pass", "fail", "metric", "evidence"))
+        unsafe_or_leaky = _count(joined, ("identify yourself", "hidden system", "secret", "provider name"))
+        return {
+            "control_markers": control_markers,
+            "standard_markers": standard_markers,
+            "unsafe_or_leaky_markers": unsafe_or_leaky,
+            "family_score_boosts": {
+                "openai_like": standard_markers * 0.16 + control_markers * 0.08,
+                "anthropic_like": control_markers * 0.14,
+                "google_like": standard_markers * 0.12 + (0.35 if "multimodal" in joined else 0.0),
+                "open_source_or_relay": unsafe_or_leaky * 0.45,
+            },
         }
     if method == "embedding_fingerprint":
         db_vectors = len(databases.get("embedding", {}).get("vectors", []))

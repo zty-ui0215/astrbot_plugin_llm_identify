@@ -110,6 +110,24 @@
       "prompt": "Translate this sentence naturally into English and preserve the product name AuditLens: AuditLens can compare endpoint behavior over time."
     },
     {
+      "id": "scientific_probe_design_random",
+      "method": "scientific_probe_design",
+      "profiles": ["standard", "exhaustive"],
+      "prompt": "Generate exactly 5 independent, model-agnostic LLM fingerprint audit questions. They must be randomized in topic, safe, answerable without private data, and each include one measurable pass/fail criterion. Return JSON only with key questions."
+    },
+    {
+      "id": "scientific_probe_design_standards",
+      "method": "scientific_probe_design",
+      "profiles": ["standard", "exhaustive"],
+      "prompt": "Design a standards-compliant rubric for judging whether an LLM endpoint follows JSON-output instructions. Include schema validity, instruction adherence, evidence, and uncertainty handling. Use 4 criteria."
+    },
+    {
+      "id": "scientific_probe_design_controlled",
+      "method": "scientific_probe_design",
+      "profiles": ["exhaustive"],
+      "prompt": "Create a compact scientific A/B probe plan to test randomness versus deterministic routing in an LLM endpoint. Include hypothesis, controlled variables, repeated trials, bias controls, and interpretation limits."
+    },
+    {
       "id": "api_sidechannel_stream",
       "method": "api_sidechannel",
       "profiles": ["standard", "exhaustive"],
@@ -224,6 +242,17 @@
         "anthropic_like": ["careful", "consistent"],
         "google_like": ["natural", "translation"],
         "open_source_or_relay": ["as an ai", "cannot"]
+      }
+    },
+    {
+      "method": "scientific_probe_design",
+      "quality_divisor": 6,
+      "evidence_markers": ["control", "variable", "hypothesis", "rubric", "json", "schema", "pass", "fail", "metric", "evidence", "random"],
+      "family_markers": {
+        "openai_like": ["json", "schema", "criterion", "pass/fail", "evidence", "uncertainty"],
+        "anthropic_like": ["controlled", "hypothesis", "bias", "limitations", "safe"],
+        "google_like": ["rubric", "metric", "multimodal", "evaluation"],
+        "open_source_or_relay": ["identify yourself", "hidden system", "secret", "provider name"]
       }
     },
     {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from astrbot.api import logger
@@ -19,7 +20,13 @@ try:
     from .llm_identify.adapters.astrbot import reply_from_astrbot_response
     from .llm_identify.adapters.direct_openai import DirectOpenAICompatibleAdapter
     from .llm_identify.capture import TraceStore
+    from .llm_identify.contribution.evidence_schema import build_evidence_package
+    from .llm_identify.contribution.exporter import ContributionExporter
+    from .llm_identify.contribution.github_issue_submitter import DEFAULT_ISSUE_URL, build_github_issue_url
+    from .llm_identify.contribution.official_endpoint_detector import OfficialEndpoint, detect_official_endpoint
+    from .llm_identify.dynamic_fingerprint import build_feature_vector
     from .llm_identify.engine import AuditEngine, AuditOptions
+    from .llm_identify.evidence import AUXILIARY_JUDGE_ITEMS
     from .llm_identify.i18n import normalize_language, t
     from .llm_identify.models import AuditReport, ModelReply
     from .llm_identify.scoring import format_text_report
@@ -29,7 +36,13 @@ except ImportError:
     from llm_identify.adapters.astrbot import reply_from_astrbot_response
     from llm_identify.adapters.direct_openai import DirectOpenAICompatibleAdapter
     from llm_identify.capture import TraceStore
+    from llm_identify.contribution.evidence_schema import build_evidence_package
+    from llm_identify.contribution.exporter import ContributionExporter
+    from llm_identify.contribution.github_issue_submitter import DEFAULT_ISSUE_URL, build_github_issue_url
+    from llm_identify.contribution.official_endpoint_detector import OfficialEndpoint, detect_official_endpoint
+    from llm_identify.dynamic_fingerprint import build_feature_vector
     from llm_identify.engine import AuditEngine, AuditOptions
+    from llm_identify.evidence import AUXILIARY_JUDGE_ITEMS
     from llm_identify.i18n import normalize_language, t
     from llm_identify.models import AuditReport, ModelReply
     from llm_identify.scoring import format_text_report
@@ -59,11 +72,20 @@ class LLMIdentifyPlugin(Star):
         self.fingerprint_profile = str(self.config.get("fingerprint_profile", "standard") or "standard").strip().lower()
         self.fingerprint_repeats = self._cfg_int("fingerprint_repeats", 3, 1, 8)
         self.enable_auxiliary_llm_judge = self._cfg_bool("enable_auxiliary_llm_judge", False)
+        self.auxiliary_judge_mode = self._cfg_choice("auxiliary_judge_mode", "astrbot", {"astrbot", "openai_compatible"})
         self.auxiliary_judge_provider_id = str(self.config.get("auxiliary_judge_provider_id", "") or "").strip()
+        self.auxiliary_judge_base_url = str(self.config.get("auxiliary_judge_base_url", "") or "").strip()
+        self.auxiliary_judge_api_key = str(self.config.get("auxiliary_judge_api_key", "") or "").strip()
+        self.auxiliary_judge_model = str(self.config.get("auxiliary_judge_model", "") or "").strip()
+        self.contribution_export_dir = str(self.config.get("contribution_export_dir", "tmp/contributions") or "tmp/contributions").strip()
+        self.contribution_issue_url = str(self.config.get("contribution_issue_url", DEFAULT_ISSUE_URL) or DEFAULT_ISSUE_URL).strip()
         self.strict_mode = self._cfg_bool("strict_mode", False)
         self.default_language = normalize_language(self.config.get("language") or self.config.get("locale"))
         self.last_report: AuditReport | None = None
+        self.last_official_endpoint: OfficialEndpoint | None = None
+        self.last_contribution_package: dict[str, Any] | None = None
         self._running = False
+        self._auxiliary_direct_client: DirectOpenAICompatibleAdapter | None = None
 
     async def initialize(self):
         self._register_page_api_if_available()
@@ -94,15 +116,17 @@ class LLMIdentifyPlugin(Star):
             async def generate(prompt: str, **kwargs: Any) -> ModelReply:
                 return await asyncio.wait_for(self._ask_current_model(provider_id, prompt, **kwargs), timeout=self.timeout)
 
+            trace_store = TraceStore()
             adapter = GenerateAdapter(
                 adapter_type="astrbot",
                 provider_id=provider_id,
                 claimed_model=claimed_model,
                 generate_fn=generate,
-                trace_store=TraceStore(),
+                trace_store=trace_store,
             )
             report = await AuditEngine(adapter, self._audit_options(full=full, language=language)).run()
             self.last_report = report
+            self._clear_contribution_candidate()
             return report
         finally:
             self._running = False
@@ -126,16 +150,18 @@ class LLMIdentifyPlugin(Star):
             async def generate(prompt: str, **kwargs: Any) -> ModelReply:
                 return await asyncio.wait_for(client.generate(prompt, **kwargs), timeout=self.timeout)
 
+            trace_store = TraceStore()
             adapter = GenerateAdapter(
                 adapter_type="direct_openai_compatible",
                 provider_id=f"direct-openai-compatible:{self._safe_endpoint_label(base_url)}",
                 claimed_model=model,
                 generate_fn=generate,
-                trace_store=TraceStore(),
+                trace_store=trace_store,
                 count_tokens_fn=client.count_tokens,
             )
             report = await AuditEngine(adapter, self._audit_options(full=bool(payload.get("full", True)), language=language)).run()
             self.last_report = report
+            self._prepare_contribution_candidate(base_url=base_url, report=report, traces=trace_store.traces)
             return report
         finally:
             self._running = False
@@ -157,16 +183,42 @@ class LLMIdentifyPlugin(Star):
             fingerprint_repeats=self.fingerprint_repeats,
             enable_auxiliary_llm_judge=self.enable_auxiliary_llm_judge,
             auxiliary_judge_fn=self._auxiliary_judge if self.enable_auxiliary_llm_judge else None,
+            auxiliary_judge_model=self._auxiliary_judge_label(),
             strict_mode=self.strict_mode,
             language=normalize_language(language or self.default_language),
         )
 
     async def _auxiliary_judge(self, prompt: str) -> str:
+        if self.auxiliary_judge_mode == "openai_compatible":
+            client = self._get_auxiliary_direct_client()
+            reply = await client.generate(prompt, temperature=0.0)
+            return reply.text
         provider_id = self.auxiliary_judge_provider_id or self.page_provider_id or await self._get_provider_id(None)
         if not provider_id:
             raise RuntimeError(t("error.no_aux_judge", self.default_language))
         reply = await self._ask_current_model(provider_id, prompt, temperature=0.0)
         return reply.text
+
+    def _get_auxiliary_direct_client(self) -> DirectOpenAICompatibleAdapter:
+        if not self.auxiliary_judge_base_url:
+            raise RuntimeError(t("error.base_url_required", self.default_language))
+        if not self.auxiliary_judge_api_key:
+            raise RuntimeError(t("error.api_key_required", self.default_language))
+        if not self.auxiliary_judge_model:
+            raise RuntimeError(t("error.model_required", self.default_language))
+        if self._auxiliary_direct_client is None:
+            self._auxiliary_direct_client = DirectOpenAICompatibleAdapter(
+                base_url=self.auxiliary_judge_base_url,
+                api_key=self.auxiliary_judge_api_key,
+                model=self.auxiliary_judge_model,
+                timeout=self.timeout,
+            )
+        return self._auxiliary_direct_client
+
+    def _auxiliary_judge_label(self) -> str:
+        if self.auxiliary_judge_mode == "openai_compatible":
+            return self.auxiliary_judge_model or "openai-compatible"
+        return self.auxiliary_judge_provider_id or self.page_provider_id or "astrbot-provider"
 
     async def _get_provider_id(self, event: AstrMessageEvent | None = None) -> str | None:
         provider_getter = getattr(self.context, "get_current_chat_provider_id", None)
@@ -235,6 +287,8 @@ class LLMIdentifyPlugin(Star):
         routes: list[tuple[str, Callable[..., Awaitable[dict[str, Any]]], list[str], str]] = [
             ("/status", self.page_status, ["GET"], "LLM Identify page status"),
             ("/detect", self.page_detect, ["POST"], "LLM Identify run detection"),
+            ("/settings", self.page_settings, ["POST"], "LLM Identify page settings"),
+            ("/contribution", self.page_contribution, ["POST"], "LLM Identify voluntary contribution export"),
         ]
         for path, handler, methods, desc in routes:
             register_web_api(f"{PAGE_API_PREFIX}{path}", handler, methods, desc)
@@ -254,19 +308,8 @@ class LLMIdentifyPlugin(Star):
                 "claimed_model": claimed_model,
                 "model_family_guess": detect_model_family(claimed_model, provider_id or ""),
                 "providers": providers,
-                "config": {
-                    "timeout": self.timeout,
-                    "page_provider_id": self.page_provider_id,
-                    "enable_protocol_probe": self.enable_protocol_probe,
-                    "enable_token_probe": self.enable_token_probe,
-                    "enable_context_probe": self.enable_context_probe,
-                    "enable_fingerprint_probe": self.enable_fingerprint_probe,
-                    "fingerprint_profile": self.fingerprint_profile,
-                    "fingerprint_repeats": self.fingerprint_repeats,
-                    "enable_auxiliary_llm_judge": self.enable_auxiliary_llm_judge,
-                    "auxiliary_judge_provider_id": self.auxiliary_judge_provider_id,
-                    "strict_mode": self.strict_mode,
-                },
+                "config": self._public_config(),
+                "contribution": self._contribution_status(),
                 "last_report": self._report_payload(self.last_report, language),
             }
         )
@@ -287,6 +330,158 @@ class LLMIdentifyPlugin(Star):
         except Exception as exc:
             logger.warning("[LLMIdentify] page detect failed: %s", exc, exc_info=True)
             return self._error(str(exc))
+
+    async def page_contribution(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        try:
+            payload = await self._extract_page_payload(*args, **kwargs)
+            action = str(payload.get("action") or "status").strip().lower()
+            if action == "status":
+                return self._ok(self._contribution_status())
+            if self.last_contribution_package is None:
+                return self._error("No official-endpoint contribution candidate is available. Run a full direct audit against an official API first.")
+            if action == "issue_url":
+                return self._ok({"issue_url": build_github_issue_url(self.last_contribution_package, self.contribution_issue_url)})
+            if action == "export":
+                task_id = self.last_contribution_package.get("task_ref") or f"page-{int(time.time())}"
+                path = ContributionExporter(self._contribution_export_root()).export_json(str(task_id), self.last_contribution_package)
+                return self._ok({"path": str(path), "package": self.last_contribution_package})
+            if action == "push":
+                task_id = self.last_contribution_package.get("task_ref") or f"page-{int(time.time())}"
+                path = ContributionExporter(self._contribution_export_root()).export_json(str(task_id), self.last_contribution_package)
+                return self._ok({"path": str(path), "issue_url": build_github_issue_url(self.last_contribution_package, self.contribution_issue_url)})
+            if action == "package":
+                return self._ok({"package": self.last_contribution_package})
+            return self._error(f"Unsupported contribution action: {action}")
+        except Exception as exc:
+            logger.warning("[LLMIdentify] contribution action failed: %s", exc, exc_info=True)
+            return self._error(str(exc))
+
+    async def page_settings(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        try:
+            payload = await self._extract_page_payload(*args, **kwargs)
+            settings = self._sanitize_page_settings(payload)
+            self._apply_page_settings(settings)
+            await self._persist_config_best_effort()
+            return self._ok({"config": self._public_config()})
+        except Exception as exc:
+            logger.warning("[LLMIdentify] page settings update failed: %s", exc, exc_info=True)
+            return self._error(str(exc))
+
+    def _sanitize_page_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        mode = self._choice_value(payload.get("auxiliary_judge_mode"), self.auxiliary_judge_mode, {"astrbot", "openai_compatible"})
+        settings: dict[str, Any] = {
+            "enable_auxiliary_llm_judge": self._bool_value(payload.get("enable_auxiliary_llm_judge"), self.enable_auxiliary_llm_judge),
+            "auxiliary_judge_mode": mode,
+            "auxiliary_judge_provider_id": str(payload.get("auxiliary_judge_provider_id") or "").strip(),
+            "auxiliary_judge_base_url": str(payload.get("auxiliary_judge_base_url") or "").strip(),
+            "auxiliary_judge_model": str(payload.get("auxiliary_judge_model") or "").strip(),
+        }
+        api_key = str(payload.get("auxiliary_judge_api_key") or "").strip()
+        if api_key:
+            settings["auxiliary_judge_api_key"] = api_key
+        if settings["enable_auxiliary_llm_judge"]:
+            if mode == "astrbot" and not settings["auxiliary_judge_provider_id"] and not self.page_provider_id:
+                raise RuntimeError(t("error.no_aux_judge", self.default_language))
+            if mode == "openai_compatible":
+                if not settings["auxiliary_judge_base_url"]:
+                    raise RuntimeError(t("error.base_url_required", self.default_language))
+                if not settings["auxiliary_judge_model"]:
+                    raise RuntimeError(t("error.model_required", self.default_language))
+                if not api_key and not self.auxiliary_judge_api_key:
+                    raise RuntimeError(t("error.api_key_required", self.default_language))
+        return settings
+
+    def _apply_page_settings(self, settings: dict[str, Any]) -> None:
+        self.enable_auxiliary_llm_judge = bool(settings["enable_auxiliary_llm_judge"])
+        self.auxiliary_judge_mode = str(settings["auxiliary_judge_mode"])
+        self.auxiliary_judge_provider_id = str(settings["auxiliary_judge_provider_id"])
+        self.auxiliary_judge_base_url = str(settings["auxiliary_judge_base_url"])
+        self.auxiliary_judge_model = str(settings["auxiliary_judge_model"])
+        if "auxiliary_judge_api_key" in settings:
+            self.auxiliary_judge_api_key = str(settings["auxiliary_judge_api_key"])
+        self._auxiliary_direct_client = None
+        for key, value in settings.items():
+            self.config[key] = value
+
+    def _public_config(self) -> dict[str, Any]:
+        return {
+            "timeout": self.timeout,
+            "page_provider_id": self.page_provider_id,
+            "enable_protocol_probe": self.enable_protocol_probe,
+            "enable_token_probe": self.enable_token_probe,
+            "enable_context_probe": self.enable_context_probe,
+            "enable_fingerprint_probe": self.enable_fingerprint_probe,
+            "fingerprint_profile": self.fingerprint_profile,
+            "fingerprint_repeats": self.fingerprint_repeats,
+            "enable_auxiliary_llm_judge": self.enable_auxiliary_llm_judge,
+            "auxiliary_judge_mode": self.auxiliary_judge_mode,
+            "auxiliary_judge_provider_id": self.auxiliary_judge_provider_id,
+            "auxiliary_judge_base_url": self.auxiliary_judge_base_url,
+            "auxiliary_judge_model": self.auxiliary_judge_model,
+            "auxiliary_judge_has_api_key": bool(self.auxiliary_judge_api_key),
+            "auxiliary_judge_items": list(AUXILIARY_JUDGE_ITEMS),
+            "contribution_export_dir": self.contribution_export_dir,
+            "contribution_issue_url": self.contribution_issue_url,
+            "strict_mode": self.strict_mode,
+        }
+
+    def _prepare_contribution_candidate(self, *, base_url: str, report: AuditReport, traces: list[Any]) -> None:
+        endpoint = detect_official_endpoint(base_url)
+        if endpoint is None:
+            self._clear_contribution_candidate()
+            return
+        task_id = f"page-{int(report.created_at or time.time())}-{endpoint.provider}-{report.claimed_model}"
+        self.last_official_endpoint = endpoint
+        self.last_contribution_package = build_evidence_package(
+            task_id=task_id,
+            report=asdict(report),
+            feature_vector=build_feature_vector(report, traces),
+            official_endpoint=endpoint,
+            plugin_version="0.5.0",
+        )
+
+    def _clear_contribution_candidate(self) -> None:
+        self.last_official_endpoint = None
+        self.last_contribution_package = None
+
+    def _contribution_status(self) -> dict[str, Any]:
+        endpoint = self.last_official_endpoint
+        return {
+            "available": self.last_contribution_package is not None,
+            "endpoint": asdict(endpoint) if endpoint else None,
+            "issue_url": build_github_issue_url(self.last_contribution_package, self.contribution_issue_url) if self.last_contribution_package else "",
+            "export_dir": str(self._contribution_export_root()),
+            "privacy": "Voluntary export only. Sanitized aggregate evidence excludes raw prompts, completions, API keys, headers, account identifiers, IPs, and private content.",
+        }
+
+    def _contribution_export_root(self) -> Path:
+        path = Path(self.contribution_export_dir)
+        if not path.is_absolute():
+            path = Path(__file__).resolve().parent / path
+        return path
+
+    async def _persist_config_best_effort(self) -> None:
+        for owner in (self.config, self.context):
+            for method_name in ("save", "save_config", "update_config"):
+                method = getattr(owner, method_name, None)
+                if not callable(method):
+                    continue
+                try:
+                    result = method(self.config) if method_name == "update_config" else method()
+                    if hasattr(result, "__await__"):
+                        await result
+                    return
+                except TypeError:
+                    try:
+                        result = method()
+                        if hasattr(result, "__await__"):
+                            await result
+                        return
+                    except Exception:
+                        continue
+                except Exception:
+                    logger.debug("[LLMIdentify] config persistence hook %s failed", method_name, exc_info=True)
+                    continue
 
     def _report_payload(self, report: AuditReport | None, language: str | None = None) -> dict[str, Any] | None:
         if report is None:
@@ -467,9 +662,7 @@ class LLMIdentifyPlugin(Star):
 
     def _cfg_bool(self, key: str, default: bool) -> bool:
         value = self.config.get(key, default)
-        if isinstance(value, str):
-            return value.strip().lower() in {"true", "1", "yes", "on", "enable", "enabled"}
-        return bool(value)
+        return self._bool_value(value, default)
 
     def _cfg_int(self, key: str, default: int, minimum: int, maximum: int) -> int:
         try:
@@ -477,6 +670,22 @@ class LLMIdentifyPlugin(Star):
         except (TypeError, ValueError):
             value = default
         return max(minimum, min(maximum, value))
+
+    def _cfg_choice(self, key: str, default: str, allowed: set[str]) -> str:
+        return self._choice_value(self.config.get(key), default, allowed)
+
+    @staticmethod
+    def _bool_value(value: Any, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, str):
+            return value.strip().lower() in {"true", "1", "yes", "on", "enable", "enabled"}
+        return bool(value)
+
+    @staticmethod
+    def _choice_value(value: Any, default: str, allowed: set[str]) -> str:
+        candidate = str(value or default).strip().lower()
+        return candidate if candidate in allowed else default
 
     def _parse_mode(self, text: str) -> tuple[str, str]:
         normalized = text.lower().strip()

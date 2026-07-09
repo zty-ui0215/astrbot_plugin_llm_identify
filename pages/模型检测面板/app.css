@@ -90,6 +90,21 @@ button:hover {
   background: var(--accent-dark);
 }
 
+.page-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.tab-btn {
+  min-width: 88px;
+}
+
+.tab-btn:not(.active) {
+  background: var(--surface);
+  color: var(--accent-dark);
+}
+
 .topbar-actions {
   display: flex;
   flex-wrap: wrap;
@@ -138,7 +153,7 @@ button:disabled {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
-  margin: 14px 0;
+  margin: 0 0 14px;
 }
 
 .metric {
@@ -193,6 +208,18 @@ button:disabled {
   gap: 6px;
 }
 
+.mode-panel .checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.checkbox-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
 .mode-panel label span {
   color: var(--muted);
   font-size: 13px;
@@ -215,6 +242,55 @@ button:disabled {
   display: grid;
   grid-template-columns: minmax(180px, 1.2fr) minmax(180px, 1fr) minmax(160px, 0.8fr);
   gap: 12px;
+}
+
+.settings-note {
+  font-size: 13px;
+}
+
+.weight-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.weight-panel h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.weight-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.weight-item {
+  display: grid;
+  gap: 6px;
+  min-height: 84px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.weight-item strong {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.weight-item span {
+  color: var(--accent-dark);
+}
+
+.weight-item p {
+  font-size: 12px;
 }
 
 .report-panel {
@@ -332,6 +408,36 @@ pre {
   line-height: 1.55;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgba(24, 32, 42, 0.42);
+  padding: 18px;
+}
+
+.modal {
+  width: min(520px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 20px;
+  box-shadow: 0 18px 60px rgba(24, 32, 42, 0.22);
+}
+
+.modal h2 {
+  margin-bottom: 8px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
 @media (max-width: 720px) {
   .shell {
     width: min(100vw - 20px, 1120px);
@@ -368,5 +474,13 @@ pre {
 
   .direct-fields {
     grid-template-columns: 1fr;
+  }
+
+  .weight-list {
+    grid-template-columns: 1fr;
+  }
+
+  .modal-actions {
+    flex-direction: column-reverse;
   }
 }

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 
 from llm_identify.contribution.evidence_schema import build_evidence_package
+from llm_identify.contribution.github_issue_submitter import build_github_issue_url
 from llm_identify.contribution.official_endpoint_detector import detect_official_endpoint
 from llm_identify.contribution.sanitizer import sanitize_value
 from llm_identify.dynamic_fingerprint import DynamicFingerprintStore, build_feature_vector, cosine_similarity
@@ -15,6 +16,9 @@ class ContributionAndDynamicFingerprintTests(unittest.TestCase):
         self.assertIsNotNone(detect_official_endpoint("https://api.openai.com/v1"))
         self.assertIsNotNone(detect_official_endpoint("https://api.anthropic.com"))
         self.assertIsNotNone(detect_official_endpoint("https://generativelanguage.googleapis.com/v1beta"))
+        bailian = detect_official_endpoint("https://dashscope.aliyuncs.com/compatible-mode/v1")
+        self.assertIsNotNone(bailian)
+        self.assertEqual(bailian.provider, "alibaba_bailian")
         self.assertIsNone(detect_official_endpoint("https://api.openai.com.proxy.example/v1"))
         self.assertIsNone(detect_official_endpoint("http://api.openai.com/v1"))
         self.assertIsNone(detect_official_endpoint("https://mirror.example.com/v1"))
@@ -33,6 +37,8 @@ class ContributionAndDynamicFingerprintTests(unittest.TestCase):
         self.assertNotIn("raw completion", text)
         self.assertNotIn("base_url", text)
         self.assertIn("probe_a", package["probe_ids"])
+        issue_url = build_github_issue_url(package)
+        self.assertIn("github.com/zty-ui0215/llm-identify-trusted-references", issue_url)
 
     def test_sanitizer_removes_private_fields(self) -> None:
         clean = sanitize_value({"api_key": "sk-secret", "headers": {"authorization": "Bearer x"}, "metric": 0.4, "email": "a@example.com"})

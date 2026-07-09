@@ -11,6 +11,14 @@ DEFAULT_OFFICIAL_ENDPOINTS = {
     "generativelanguage.googleapis.com": {"provider": "google", "paths": ("", "/v1", "/v1beta")},
     "api.mistral.ai": {"provider": "mistral", "paths": ("/v1",)},
     "api.cohere.com": {"provider": "cohere", "paths": ("", "/v1", "/v2")},
+    "dashscope.aliyuncs.com": {"provider": "alibaba_bailian", "paths": ("/compatible-mode/v1", "/api/v1", "/v1")},
+    "dashscope-intl.aliyuncs.com": {"provider": "alibaba_bailian", "paths": ("/compatible-mode/v1", "/api/v1", "/v1")},
+    "api.deepseek.com": {"provider": "deepseek", "paths": ("", "/v1")},
+    "ark.cn-beijing.volces.com": {"provider": "volcengine_ark", "paths": ("/api/v3", "/api/v3/chat/completions")},
+    "open.bigmodel.cn": {"provider": "zhipu", "paths": ("/api/paas/v4",)},
+    "api.moonshot.cn": {"provider": "moonshot", "paths": ("/v1",)},
+    "api.minimax.chat": {"provider": "minimax", "paths": ("/v1",)},
+    "api.siliconflow.cn": {"provider": "siliconflow", "paths": ("/v1",)},
 }
 
 

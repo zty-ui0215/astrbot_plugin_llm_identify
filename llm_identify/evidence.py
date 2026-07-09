@@ -18,6 +18,64 @@ from .utils import clamp
 JudgeFn = Callable[[str], Awaitable[str]]
 
 
+AUXILIARY_JUDGE_ITEMS: tuple[dict[str, Any], ...] = (
+    {"id": "behavioral_style", "weight": 0.14, "description": "General answer style, hedging, verbosity, and formatting habits."},
+    {"id": "reasoning_structure", "weight": 0.12, "description": "Visible reasoning organization, correction behavior, and final-answer discipline."},
+    {"id": "knowledge_boundary_honesty", "weight": 0.11, "description": "Whether uncertain or non-public facts are handled without fabrication."},
+    {"id": "safety_refusal_policy", "weight": 0.09, "description": "Benign-versus-risky boundary handling and safe alternative style."},
+    {"id": "format_instruction_following", "weight": 0.09, "description": "JSON, CSV, length, and exact-output compliance."},
+    {"id": "unicode_tokenization_artifacts", "weight": 0.07, "description": "Unicode, escaping, markdown, and tokenizer-adjacent behavior."},
+    {"id": "sampling_randomness_stability", "weight": 0.13, "description": "Repeated-output variability, deterministic constraints, and random prompt behavior."},
+    {"id": "scientific_probe_quality", "weight": 0.10, "description": "Ability to generate controlled, standards-aligned, scientifically useful audit questions."},
+    {"id": "routing_sidechannel_consistency", "weight": 0.08, "description": "Streaming, route stability, and inference-stack consistency signals."},
+    {"id": "public_model_docs_match", "weight": 0.07, "description": "Fit against public model documentation and known capability disclosures."},
+)
+
+
+MODEL_FEATURE_KNOWLEDGE_BASE: tuple[dict[str, Any], ...] = (
+    {
+        "source_id": "openai_models_docs_2026",
+        "url": "https://developers.openai.com/api/docs/models",
+        "family": "openai_like",
+        "summary": (
+            "OpenAI model docs list latest GPT models with reasoning effort levels, Responses API support, "
+            "tools such as functions/web/file search/computer use, context windows, max output, and knowledge cutoffs."
+        ),
+        "feature_hints": ["reasoning effort levels", "Responses API", "tool support", "large context windows", "model IDs beginning with gpt"],
+    },
+    {
+        "source_id": "anthropic_claude_models_docs_2026",
+        "url": "https://platform.claude.com/docs/en/about-claude/models/overview",
+        "family": "anthropic_like",
+        "summary": (
+            "Anthropic Claude docs compare current Claude models by adaptive/extended thinking, pinned snapshot IDs, "
+            "1M or 200k context windows, max output limits, and Claude-specific model aliases."
+        ),
+        "feature_hints": ["Claude IDs", "adaptive thinking", "extended thinking", "pinned snapshots", "long-context Claude variants"],
+    },
+    {
+        "source_id": "google_gemini_models_docs_2026",
+        "url": "https://ai.google.dev/gemini-api/docs/models",
+        "family": "google_like",
+        "summary": (
+            "Google Gemini docs describe Gemini 2.5/3 models, deep reasoning and coding capabilities, "
+            "Flash/Flash-Lite latency tiers, Live API voice/video models, native audio reasoning, and generative media models."
+        ),
+        "feature_hints": ["Gemini", "Flash", "Flash-Lite", "deep reasoning", "Live API", "native audio"],
+    },
+    {
+        "source_id": "open_source_model_cards",
+        "url": "https://www.llama.com/docs/model-cards-and-prompt-formats/",
+        "family": "open_source_or_relay",
+        "summary": (
+            "Open-source model cards and prompt-format docs commonly expose model IDs, prompt templates, license terms, "
+            "architecture notes, and deployment-specific behavior that may surface through relays or hosted endpoints."
+        ),
+        "feature_hints": ["model card", "prompt format", "license", "Llama", "Qwen", "Mistral", "hosted relay"],
+    },
+)
+
+
 @dataclass(frozen=True)
 class ExternalJudge:
     model: str
@@ -258,15 +316,28 @@ def _corpus_source_result(result: CorpusLoadResult) -> EvidenceSourceResult:
 
 
 def auxiliary_judge_prompt(bundle: FingerprintFeatureBundle) -> str:
+    method_evidence = {
+        method.method: {
+            "family_scores": method.family_scores,
+            "quality": method.quality,
+            "evidence": _compact_evidence(method.evidence),
+        }
+        for method in bundle.methods
+    }
     summary = {
-        "method_scores": {method.method: method.family_scores for method in bundle.methods},
-        "method_quality": {method.method: method.quality for method in bundle.methods},
+        "judge_items": AUXILIARY_JUDGE_ITEMS,
+        "method_evidence": method_evidence,
         "database_status": bundle.database_status,
+        "public_model_feature_knowledge_base": MODEL_FEATURE_KNOWLEDGE_BASE,
     }
     return (
-        "You are an external LLM fingerprint evidence provider. Compare only the extracted audit features below; "
-        "do not infer from provider names or hidden assumptions. Return compact JSON with keys "
-        "family, confidence, rationale, supporting_evidence, contradicting_evidence. Allowed family values: "
+        "You are an external LLM fingerprint evidence provider. Judge only the supplied extracted audit evidence, "
+        "generated probe outputs, and public model-feature knowledge summaries. Do not infer from provider names or hidden assumptions.\n"
+        "Use the judge_items weights exactly. Cover randomness/stability, standards-compliant probe design, scientific probe design, "
+        "and judgment-only items where deterministic parsers are weak.\n"
+        "Return compact JSON with keys: family, confidence, weighted_score, item_scores, rationale, supporting_evidence, "
+        "contradicting_evidence, suggested_followup_questions. item_scores must be an object keyed by judge_items id; "
+        "each value must include family, confidence, weight, and evidence. Allowed family values: "
         "openai_like, anthropic_like, google_like, open_source_or_relay, unknown.\n"
         f"FEATURES:\n{json.dumps(summary, sort_keys=True)}"
     )
@@ -275,19 +346,74 @@ def auxiliary_judge_prompt(bundle: FingerprintFeatureBundle) -> str:
 def parse_auxiliary_judgment(judgment: str, *, method: str = "external_llm_judge") -> MethodFingerprint:
     text = str(judgment or "").strip()
     parsed = _parse_json_object(text)
-    family = _family_from_judgment(parsed, text.lower())
-    confidence = _confidence_from_judgment(parsed, text.lower())
-    scores = {family_name: 0.0 for family_name in FAMILIES}
-    scores[family] = confidence
-    for other in scores:
-        if other != family:
-            scores[other] = (1.0 - confidence) / 4.0
+    item_scores = _weighted_item_scores(parsed)
+    if item_scores:
+        scores = item_scores
+        family = max(scores.items(), key=lambda item: item[1])[0]
+        confidence = clamp(float(parsed.get("confidence") or max(scores.values())), 0.05, 0.95)
+    else:
+        family = _family_from_judgment(parsed, text.lower())
+        confidence = _confidence_from_judgment(parsed, text.lower())
+        scores = {family_name: 0.0 for family_name in FAMILIES}
+        scores[family] = confidence
+        for other in scores:
+            if other != family:
+                scores[other] = (1.0 - confidence) / 4.0
+    structured_quality = 0.62 if item_scores else 0.5
     return MethodFingerprint(
         method=method,
         family_scores={key: round(value, 4) for key, value in scores.items()},
-        quality=0.5 if family != "unknown" else 0.2,
-        evidence={"raw_judgment": text[:1200], "parsed_family": family, "parsed_confidence": confidence, "structured": bool(parsed)},
+        quality=structured_quality if family != "unknown" else 0.22,
+        evidence={
+            "raw_judgment": text[:1200],
+            "parsed_family": family,
+            "parsed_confidence": confidence,
+            "structured": bool(parsed),
+            "item_scores": parsed.get("item_scores") if isinstance(parsed.get("item_scores"), dict) else {},
+            "judge_item_weights": {str(item["id"]): float(item["weight"]) for item in AUXILIARY_JUDGE_ITEMS},
+        },
     )
+
+
+def _compact_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key, value in evidence.items():
+        if key == "sample_responses" and isinstance(value, list):
+            compact[key] = [str(item)[:420] for item in value[:4]]
+        elif isinstance(value, (str, int, float, bool)) or value is None:
+            compact[key] = value
+        elif isinstance(value, dict):
+            compact[key] = {str(k): v for k, v in list(value.items())[:12] if isinstance(v, (str, int, float, bool)) or v is None}
+        elif isinstance(value, list):
+            compact[key] = [item for item in value[:12] if isinstance(item, (str, int, float, bool))]
+    return compact
+
+
+def _weighted_item_scores(parsed: dict[str, Any]) -> dict[str, float] | None:
+    raw_items = parsed.get("item_scores")
+    if not isinstance(raw_items, dict):
+        return None
+    expected_weights = {str(item["id"]): float(item["weight"]) for item in AUXILIARY_JUDGE_ITEMS}
+    scores = {family: 0.0 for family in FAMILIES}
+    total_weight = 0.0
+    for item_id, expected_weight in expected_weights.items():
+        item = raw_items.get(item_id)
+        if not isinstance(item, dict):
+            continue
+        family = _normalize_family(str(item.get("family") or "")) or "unknown"
+        confidence = _confidence_from_judgment(item, str(item).lower())
+        weight = clamp(float(item.get("weight") or expected_weight), 0.0, 1.0)
+        if abs(weight - expected_weight) > 0.001:
+            weight = expected_weight
+        scores[family] += weight * confidence
+        spill = weight * (1.0 - confidence) / 4.0
+        for other in scores:
+            if other != family:
+                scores[other] += spill
+        total_weight += weight
+    if total_weight <= 0:
+        return None
+    return {family: round(clamp(value / total_weight, 0.0, 1.0), 4) for family, value in scores.items()}
 
 
 def _extract_models(raw: Any, source_id: str) -> list[dict[str, Any]]:

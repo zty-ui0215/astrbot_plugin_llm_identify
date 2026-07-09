@@ -52,7 +52,28 @@ const PAGE_TEXT = {
     model: "Model",
     audit_result: "Audit Result",
     primary_findings: "Primary Findings",
-    text_report: "Text report"
+    text_report: "Text report",
+    audit_tab: "Audit",
+    settings_tab: "Settings",
+    assistant_settings: "LLM-assisted Detection Model",
+    assistant_settings_hint: "Choose an auxiliary judge model for deep fingerprint matching.",
+    save_settings: "Save",
+    settings_saved: "Settings saved.",
+    settings_failed: "Settings save failed.",
+    enable_auxiliary_judge: "Enable auxiliary LLM judge",
+    assistant_source: "Assistant model source",
+    source_astrbot: "AstrBot connected model",
+    source_openai: "OpenAI-compatible API",
+    assistant_astrbot_model: "AstrBot auxiliary model",
+    api_key_saved: "An API key is already saved. Leave the field blank to keep it.",
+    aux_direct_required: "OpenAI-compatible auxiliary mode requires Base URL, API Key, and Model.",
+    assistant_weights: "Auxiliary detection items and weights",
+    contribution_title: "Voluntary official fingerprint contribution",
+    contribution_hint: "A sanitized candidate package is available for this official endpoint audit.",
+    push_contribution: "Submit",
+    not_now: "Not now",
+    contribution_pushed: "Contribution page opened.",
+    contribution_unavailable: "Run a full direct audit against an official API before contributing."
   },
   "zh-CN": {
     unknown: "未知", idle: "空闲", running: "运行中", none: "无", pass: "通过", fail: "失败", warning: "警告",
@@ -102,7 +123,28 @@ const PAGE_TEXT = {
     model: "模型",
     audit_result: "审计结果",
     primary_findings: "主要发现",
-    text_report: "文本报告"
+    text_report: "文本报告",
+    audit_tab: "检测",
+    settings_tab: "设置",
+    assistant_settings: "LLM 辅助检测模型",
+    assistant_settings_hint: "选择用于深度指纹匹配的辅助判断模型。",
+    save_settings: "保存",
+    settings_saved: "设置已保存。",
+    settings_failed: "设置保存失败。",
+    enable_auxiliary_judge: "启用辅助 LLM 判断",
+    assistant_source: "辅助模型来源",
+    source_astrbot: "AstrBot 已接入模型",
+    source_openai: "OpenAI 兼容协议 API",
+    assistant_astrbot_model: "AstrBot 辅助模型",
+    api_key_saved: "已保存 API Key。留空将继续使用已保存的 Key。",
+    aux_direct_required: "OpenAI 兼容辅助模式需要填写 Base URL、API Key 和模型。",
+    assistant_weights: "辅助检测项目和权重",
+    contribution_title: "志愿上报官方模型指纹",
+    contribution_hint: "检测到官方 API，本次检测已生成脱敏模型指纹候选包。是否一键提交到志愿库？",
+    push_contribution: "一键上报",
+    not_now: "暂不",
+    contribution_pushed: "已打开上报页面。",
+    contribution_unavailable: "请先对官方 API 运行完整直连检测。"
   },
   "ja-JP": {
     unknown: "不明", idle: "待機中", running: "実行中", none: "なし", pass: "合格", fail: "失敗", warning: "警告",
@@ -152,18 +194,55 @@ const PAGE_TEXT = {
     model: "モデル",
     audit_result: "監査結果",
     primary_findings: "主要な検出事項",
-    text_report: "テキストレポート"
+    text_report: "テキストレポート",
+    audit_tab: "監査",
+    settings_tab: "設定",
+    assistant_settings: "LLM 補助検出モデル",
+    assistant_settings_hint: "詳細なフィンガープリント照合に使う補助判定モデルを選択します。",
+    save_settings: "保存",
+    settings_saved: "設定を保存しました。",
+    settings_failed: "設定の保存に失敗しました。",
+    enable_auxiliary_judge: "補助 LLM 判定を有効にする",
+    assistant_source: "補助モデルのソース",
+    source_astrbot: "AstrBot 接続済みモデル",
+    source_openai: "OpenAI 互換 API",
+    assistant_astrbot_model: "AstrBot 補助モデル",
+    api_key_saved: "API Key は保存済みです。空欄のままにすると保存済みの Key を使用します。",
+    aux_direct_required: "OpenAI 互換の補助モードでは Base URL、API Key、Model が必要です。",
+    assistant_weights: "補助検出項目と重み",
+    contribution_title: "公式モデル指紋の任意提供",
+    contribution_hint: "公式 API が検出され、この監査からサニタイズ済みモデル指紋候補パッケージを生成しました。任意リポジトリへ送信しますか。",
+    push_contribution: "ワンクリック送信",
+    not_now: "後で",
+    contribution_pushed: "送信ページを開きました。",
+    contribution_unavailable: "提供前に公式 API への完全な直接監査を実行してください。"
   }
 };
 let bridgeReadyPromise = null;
 let languageManuallySelected = readLanguageManualFlag();
 let currentLanguage = normalizeLanguage(readStoredLanguage() || document.documentElement.lang || "en-US");
 let lastStatusData = null;
+let currentContribution = null;
 
 const els = {
   languageSelect: document.getElementById("languageSelect"),
+  auditTabBtn: document.getElementById("auditTabBtn"),
+  settingsTabBtn: document.getElementById("settingsTabBtn"),
+  auditView: document.getElementById("auditView"),
+  settingsView: document.getElementById("settingsView"),
   astrbotProviderField: document.getElementById("astrbotProviderField"),
   astrbotProvider: document.getElementById("astrbotProvider"),
+  auxEnabled: document.getElementById("auxEnabled"),
+  auxMode: document.getElementById("auxMode"),
+  auxProvider: document.getElementById("auxProvider"),
+  auxAstrbotField: document.getElementById("auxAstrbotField"),
+  auxOpenaiFields: document.getElementById("auxOpenaiFields"),
+  auxBaseUrl: document.getElementById("auxBaseUrl"),
+  auxApiKey: document.getElementById("auxApiKey"),
+  auxModel: document.getElementById("auxModel"),
+  saveSettingsBtn: document.getElementById("saveSettingsBtn"),
+  settingsSavedKey: document.getElementById("settingsSavedKey"),
+  auxWeightList: document.getElementById("auxWeightList"),
   providerId: document.getElementById("providerId"),
   claimedModel: document.getElementById("claimedModel"),
   modelFamily: document.getElementById("modelFamily"),
@@ -183,6 +262,10 @@ const els = {
   findingsSummary: document.getElementById("findingsSummary"),
   scoreGrid: document.getElementById("scoreGrid"),
   probabilityList: document.getElementById("probabilityList"),
+  contributionModal: document.getElementById("contributionModal"),
+  contributionText: document.getElementById("contributionText"),
+  dismissContributionBtn: document.getElementById("dismissContributionBtn"),
+  pushContributionBtn: document.getElementById("pushContributionBtn"),
   probeList: document.getElementById("probeList"),
   rawReport: document.getElementById("rawReport"),
 };
@@ -242,6 +325,7 @@ function setLanguage(language, options = {}) {
   }
   document.documentElement.lang = currentLanguage;
   renderStaticText();
+  if (currentContribution && els.contributionModal && !els.contributionModal.hidden) updateContributionModalText(currentContribution);
   if (lastStatusData) renderStatus(lastStatusData);
   if (!options.skipReload) loadStatus().catch((error) => setMessage(error.message || text("refresh_failed"), "error"));
 }
@@ -428,25 +512,53 @@ function renderStatus(data) {
   els.modelFamily.textContent = data.model_family_guess || text("unknown");
   els.runningState.textContent = data.running ? text("running") : text("idle");
   renderProviderOptions(data.providers || [], data.provider_id);
+  renderSettings(data.config || {}, data.providers || []);
   renderReport(data.last_report);
 }
 
-function renderProviderOptions(providers, selectedProviderId) {
-  if (!els.astrbotProvider) return;
-  const selected = els.astrbotProvider.value || selectedProviderId || "";
+function renderProviderOptions(providers, selectedProviderId, selectEl = els.astrbotProvider) {
+  if (!selectEl) return;
+  const selected = selectEl.value || selectedProviderId || "";
   const items = Array.isArray(providers) ? providers : [];
   if (!items.length) {
-    els.astrbotProvider.innerHTML = `<option value="">${escapeHtml(text("no_models"))}</option>`;
-    els.astrbotProvider.disabled = true;
+    selectEl.innerHTML = `<option value="">${escapeHtml(text("no_models"))}</option>`;
+    selectEl.disabled = true;
     return;
   }
-  els.astrbotProvider.disabled = false;
-  els.astrbotProvider.innerHTML = items.map((item) => {
+  selectEl.disabled = false;
+  selectEl.innerHTML = items.map((item) => {
     const id = String(item.id || "");
     const label = String(item.label || item.model || id || text("unknown"));
     return `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`;
   }).join("");
-  els.astrbotProvider.value = items.some((item) => String(item.id || "") === selected) ? selected : String(items[0].id || "");
+  selectEl.value = items.some((item) => String(item.id || "") === selected) ? selected : String(items[0].id || "");
+}
+
+function renderSettings(config, providers) {
+  if (!els.auxMode) return;
+  els.auxEnabled.checked = Boolean(config.enable_auxiliary_llm_judge);
+  els.auxMode.value = config.auxiliary_judge_mode || "astrbot";
+  renderProviderOptions(providers, config.auxiliary_judge_provider_id || config.page_provider_id || "", els.auxProvider);
+  els.auxBaseUrl.value = config.auxiliary_judge_base_url || "";
+  els.auxModel.value = config.auxiliary_judge_model || "";
+  els.auxApiKey.value = "";
+  if (els.settingsSavedKey) els.settingsSavedKey.hidden = !config.auxiliary_judge_has_api_key;
+  renderAuxWeights(config.auxiliary_judge_items || []);
+  syncAuxModeFields();
+}
+
+function renderAuxWeights(items) {
+  if (!els.auxWeightList) return;
+  const list = Array.isArray(items) ? items : [];
+  els.auxWeightList.innerHTML = list.map((item) => {
+    const weight = Math.round(Number(item.weight || 0) * 100);
+    return `
+      <article class="weight-item">
+        <strong>${escapeHtml(item.id || text("unknown"))}<span>${weight}%</span></strong>
+        <p>${escapeHtml(item.description || "")}</p>
+      </article>
+    `;
+  }).join("");
 }
 
 function renderReport(report) {
@@ -528,6 +640,26 @@ function renderProbe(item) {
   `;
 }
 
+function showContributionModal(contribution) {
+  if (!els.contributionModal || !contribution?.available) return;
+  currentContribution = contribution;
+  updateContributionModalText(contribution);
+  els.contributionModal.hidden = false;
+}
+
+function updateContributionModalText(contribution) {
+  if (!els.contributionText) return;
+  const endpoint = contribution.endpoint || {};
+  const provider = endpoint.provider || text("unknown");
+  const host = endpoint.host || "";
+  els.contributionText.textContent = `${text("contribution_hint")} ${provider} ${host}`.trim();
+  if (els.pushContributionBtn) els.pushContributionBtn.dataset.issueUrl = contribution.issue_url || "";
+}
+
+function hideContributionModal() {
+  if (els.contributionModal) els.contributionModal.hidden = true;
+}
+
 function localizeValue(value) {
   return text(String(value || "").toLowerCase(), value);
 }
@@ -548,6 +680,7 @@ async function loadStatus() {
   if (providerId) query.set("provider_id", providerId);
   const data = await fetchJson(`/status?${query.toString()}`);
   renderStatus(data);
+  return data;
 }
 
 function buildDetectBody() {
@@ -569,20 +702,24 @@ function buildDetectBody() {
 async function runDetection() {
   const body = buildDetectBody();
   if (!body) return;
+  hideContributionModal();
   els.detectBtn.disabled = true;
   els.refreshBtn.disabled = true;
   body.language = currentLanguage;
+  let completed = false;
   setMessage(body.full ? text("running_full") : text("running_quick"));
   try {
     const data = await fetchJson("/detect", { method: "POST", body: JSON.stringify(body) });
     renderReport(data.report);
+    completed = true;
     setMessage(text("audit_complete"));
   } catch (error) {
     setMessage(error.message || text("audit_failed"), "error");
   } finally {
     els.detectBtn.disabled = false;
     els.refreshBtn.disabled = false;
-    await loadStatus().catch(() => {});
+    const status = await loadStatus().catch(() => null);
+    if (completed && status?.contribution?.available) showContributionModal(status.contribution);
   }
 }
 
@@ -592,10 +729,87 @@ function syncModeFields() {
   if (els.astrbotProviderField) els.astrbotProviderField.hidden = direct;
 }
 
+function syncAuxModeFields() {
+  const direct = (els.auxMode?.value || "astrbot") === "openai_compatible";
+  if (els.auxOpenaiFields) els.auxOpenaiFields.hidden = !direct;
+  if (els.auxAstrbotField) els.auxAstrbotField.hidden = direct;
+}
+
+function switchView(view) {
+  const settings = view === "settings";
+  if (els.auditView) els.auditView.hidden = settings;
+  if (els.settingsView) els.settingsView.hidden = !settings;
+  els.auditTabBtn?.classList.toggle("active", !settings);
+  els.settingsTabBtn?.classList.toggle("active", settings);
+}
+
+function buildSettingsBody() {
+  const mode = els.auxMode?.value || "astrbot";
+  const body = {
+    enable_auxiliary_llm_judge: Boolean(els.auxEnabled?.checked),
+    auxiliary_judge_mode: mode,
+    auxiliary_judge_provider_id: els.auxProvider?.value || "",
+    auxiliary_judge_base_url: els.auxBaseUrl?.value.trim() || "",
+    auxiliary_judge_api_key: els.auxApiKey?.value.trim() || "",
+    auxiliary_judge_model: els.auxModel?.value.trim() || "",
+  };
+  if (body.enable_auxiliary_llm_judge && mode === "openai_compatible") {
+    const hasSavedKey = lastStatusData?.config?.auxiliary_judge_has_api_key;
+    if (!body.auxiliary_judge_base_url || (!body.auxiliary_judge_api_key && !hasSavedKey) || !body.auxiliary_judge_model) {
+      setMessage(text("aux_direct_required"), "error");
+      return null;
+    }
+  }
+  return body;
+}
+
+async function saveSettings() {
+  const body = buildSettingsBody();
+  if (!body) return;
+  els.saveSettingsBtn.disabled = true;
+  setMessage("");
+  try {
+    await fetchJson("/settings", { method: "POST", body: JSON.stringify(body) });
+    await loadStatus();
+    setMessage(text("settings_saved"));
+  } catch (error) {
+    setMessage(error.message || text("settings_failed"), "error");
+  } finally {
+    els.saveSettingsBtn.disabled = false;
+  }
+}
+
+async function pushContribution() {
+  const popup = window.open("about:blank", "_blank");
+  if (popup) popup.opener = null;
+  try {
+    const data = await fetchJson("/contribution", { method: "POST", body: JSON.stringify({ action: "push" }) });
+    const url = data.issue_url || els.pushContributionBtn?.dataset.issueUrl || currentContribution?.issue_url || "";
+    if (!url) throw new Error(text("contribution_unavailable"));
+    if (popup) popup.location.href = url;
+    else window.open(url, "_blank", "noopener,noreferrer");
+    hideContributionModal();
+    setMessage(text("contribution_pushed"));
+  } catch (error) {
+    try {
+      popup?.close();
+    } catch (closeError) {
+      // Ignore popup cleanup failures.
+    }
+    setMessage(error.message || text("contribution_unavailable"), "error");
+  }
+}
+
 els.languageSelect?.addEventListener("change", () => setLanguage(els.languageSelect.value, { manual: true }));
+els.auditTabBtn?.addEventListener("click", () => switchView("audit"));
+els.settingsTabBtn?.addEventListener("click", () => switchView("settings"));
 els.astrbotProvider?.addEventListener("change", () => loadStatus().catch((error) => setMessage(error.message || text("refresh_failed"), "error")));
 els.refreshBtn.addEventListener("click", () => loadStatus().catch((error) => setMessage(error.message || text("refresh_failed"), "error")));
 els.detectBtn.addEventListener("click", () => runDetection());
+els.saveSettingsBtn?.addEventListener("click", () => saveSettings());
+els.dismissContributionBtn?.addEventListener("click", () => hideContributionModal());
+els.pushContributionBtn?.addEventListener("click", () => pushContribution());
+els.auxMode?.addEventListener("change", () => syncAuxModeFields());
 els.detectMode?.addEventListener("change", () => {
   syncModeFields();
   setMessage("");
@@ -604,6 +818,7 @@ els.detectMode?.addEventListener("change", () => {
 initHostLanguage().finally(() => {
   renderStaticText();
   syncModeFields();
+  syncAuxModeFields();
   loadStatus().catch((error) => setMessage(error.message || text("init_failed"), "error"));
 });
 

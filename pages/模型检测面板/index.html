@@ -26,6 +26,11 @@
       </div>
     </header>
 
+    <nav class="page-tabs" aria-label="Panel views">
+      <button id="auditTabBtn" class="tab-btn active" type="button" data-view="audit" data-i18n="audit_tab">Audit</button>
+      <button id="settingsTabBtn" class="tab-btn secondary-btn" type="button" data-view="settings" data-i18n="settings_tab">Settings</button>
+    </nav>
+
     <section class="summary-grid">
       <article class="metric">
         <span data-i18n="provider">Provider</span>
@@ -49,6 +54,9 @@
       </article>
     </section>
 
+    <div id="message" class="message" hidden></div>
+
+    <section id="auditView" class="page-view">
     <section class="workbench">
       <div class="workbench-head">
         <div>
@@ -85,7 +93,6 @@
           </label>
         </div>
       </div>
-      <div id="message" class="message" hidden></div>
     </section>
 
     <section id="reportPanel" class="report-panel" hidden>
@@ -111,9 +118,73 @@
         <pre id="rawReport"></pre>
       </details>
     </section>
+    </section>
+
+    <section id="settingsView" class="page-view" hidden>
+      <section class="workbench">
+        <div class="workbench-head">
+          <div>
+            <h2 data-i18n="assistant_settings">LLM-assisted Detection Model</h2>
+            <p data-i18n="assistant_settings_hint">Choose an auxiliary judge model for deep fingerprint matching.</p>
+          </div>
+          <button id="saveSettingsBtn" type="button" data-i18n="save_settings">Save</button>
+        </div>
+        <div class="mode-panel">
+          <label class="checkbox-row">
+            <input id="auxEnabled" type="checkbox" />
+            <span data-i18n="enable_auxiliary_judge">Enable auxiliary LLM judge</span>
+          </label>
+          <label>
+            <span data-i18n="assistant_source">Assistant model source</span>
+            <select id="auxMode">
+              <option value="astrbot" data-i18n="source_astrbot">AstrBot connected model</option>
+              <option value="openai_compatible" data-i18n="source_openai">OpenAI-compatible API</option>
+            </select>
+          </label>
+          <label id="auxAstrbotField">
+            <span data-i18n="assistant_astrbot_model">AstrBot auxiliary model</span>
+            <select id="auxProvider"></select>
+          </label>
+          <div id="auxOpenaiFields" class="direct-fields" hidden>
+            <label>
+              <span data-i18n="base_url">Base URL</span>
+              <input id="auxBaseUrl" type="url" placeholder="https://api.openai.com/v1" autocomplete="off" />
+            </label>
+            <label>
+              <span data-i18n="api_key">API Key</span>
+              <input id="auxApiKey" type="password" placeholder="Leave blank to keep saved key" autocomplete="off" />
+            </label>
+            <label>
+              <span data-i18n="model">Model</span>
+              <input id="auxModel" type="text" placeholder="gpt-4.1-mini" autocomplete="off" />
+            </label>
+          </div>
+          <p id="settingsSavedKey" class="settings-note" hidden data-i18n="api_key_saved">An API key is already saved. Leave the field blank to keep it.</p>
+          <div class="weight-panel">
+            <div class="weight-panel-head">
+              <h3 data-i18n="assistant_weights">Auxiliary detection items and weights</h3>
+            </div>
+            <div id="auxWeightList" class="weight-list"></div>
+          </div>
+        </div>
+      </section>
+    </section>
   </main>
 
-  <script src="./app.js?v=20260709-4"></script>
+  <div id="contributionModal" class="modal-backdrop" hidden>
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="contributionModalTitle">
+      <div>
+        <h2 id="contributionModalTitle" data-i18n="contribution_title">Voluntary official fingerprint contribution</h2>
+        <p id="contributionText" data-i18n="contribution_hint">A sanitized candidate package is available for this official endpoint audit.</p>
+      </div>
+      <div class="modal-actions">
+        <button id="dismissContributionBtn" type="button" class="secondary-btn" data-i18n="not_now">Not now</button>
+        <button id="pushContributionBtn" type="button" data-i18n="push_contribution">Submit</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="./app.js?v=20260709-5"></script>
 </body>
 </html>
 
