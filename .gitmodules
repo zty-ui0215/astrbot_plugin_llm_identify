@@ -1,0 +1,3 @@
+[submodule "llm_identify/data/trusted_references"]
+	path = llm_identify/data/trusted_references
+	url = https://github.com/zty-ui0215/astrbot_llm_identify_trusted_references.git
