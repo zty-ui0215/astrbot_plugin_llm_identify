@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from .adapters.base import GenerateAdapter
+from .adapters.base import GenerateAdapter, ProbeCircuitOpen
 from .capture import Trace, TraceStore
 from .branches import analyze_branch_evidence, branch_payload
 from .corpus import TrustedCorpusSource
@@ -56,37 +56,44 @@ class AuditEngine:
         context_truth_score = None
         prompt_injection_risk = 0.0
 
-        if self.options.enable_protocol_probe:
-            probe_results.extend(await ProtocolProbePack().run(self.adapter, language=self.options.language))
+        circuit_error: ProbeCircuitOpen | None = None
+        try:
+            if self.options.enable_protocol_probe:
+                probe_results.extend(await ProtocolProbePack().run(self.adapter, language=self.options.language))
 
-        if self.options.enable_token_probe:
-            token_traces = await TokenAuditProbePack().run(self.adapter)
-            token_features, token_results = analyze_token_traces(token_traces, language=self.options.language)
-            probe_results.extend(token_results)
+            if self.options.enable_token_probe:
+                token_traces = await TokenAuditProbePack().run(self.adapter)
+                token_features, token_results = analyze_token_traces(token_traces, language=self.options.language)
+                probe_results.extend(token_results)
 
-        if self.options.enable_context_probe:
-            await ContextWindowProbePack(target_tokens=self.options.context_probe_target_tokens).run(self.adapter)
+            if self.options.enable_context_probe:
+                await ContextWindowProbePack(target_tokens=self.options.context_probe_target_tokens).run(self.adapter)
 
-        if self.options.enable_fingerprint_probe:
-            fingerprint_traces = await FingerprintProbePack(
-                profile=self.options.fingerprint_profile,
-                repeats=self.options.fingerprint_repeats,
-                randomize=self.options.randomize_fingerprint_probes,
-                probes_per_method=self.options.fingerprint_probes_per_method,
-                seed=self.options.fingerprint_probe_seed,
-            ).run(self.adapter)
-            fingerprint_bundle, fingerprint_results = analyze_fingerprint_traces(fingerprint_traces)
-            evidence_run = await self._collect_external_evidence(fingerprint_bundle)
-            fingerprint_bundle.methods.extend(evidence_run.methods)
-            fingerprint_bundle.database_models.extend(evidence_run.database_models)
-            for source in evidence_run.sources:
-                fingerprint_bundle.database_status[f"external_source:{source.source_id}"] = source.status
-            for method in evidence_run.methods:
-                fingerprint_results.append(_auxiliary_probe_result(method))
-            fingerprint_result = fuse_fingerprint_features(fingerprint_bundle, language=self.options.language)
-            probe_results.extend(fingerprint_results)
+            if self.options.enable_fingerprint_probe:
+                fingerprint_traces = await FingerprintProbePack(
+                    profile=self.options.fingerprint_profile,
+                    repeats=self.options.fingerprint_repeats,
+                    randomize=self.options.randomize_fingerprint_probes,
+                    probes_per_method=self.options.fingerprint_probes_per_method,
+                    seed=self.options.fingerprint_probe_seed,
+                ).run(self.adapter)
+                fingerprint_bundle, fingerprint_results = analyze_fingerprint_traces(fingerprint_traces)
+                evidence_run = await self._collect_external_evidence(fingerprint_bundle)
+                fingerprint_bundle.methods.extend(evidence_run.methods)
+                fingerprint_bundle.database_models.extend(evidence_run.database_models)
+                for source in evidence_run.sources:
+                    fingerprint_bundle.database_status[f"external_source:{source.source_id}"] = source.status
+                for method in evidence_run.methods:
+                    fingerprint_results.append(_auxiliary_probe_result(method))
+                fingerprint_result = fuse_fingerprint_features(fingerprint_bundle, language=self.options.language)
+                probe_results.extend(fingerprint_results)
+        except ProbeCircuitOpen as exc:
+            circuit_error = exc
+            probe_results.append(_endpoint_anomaly_result(exc, self.options.language))
 
-        if self.options.enable_token_probe or self.options.enable_context_probe or self.options.enable_fingerprint_probe:
+        probe_results.extend(_generation_error_results(self.adapter.trace_store.traces, probe_results, self.options.language))
+
+        if circuit_error is None and (self.options.enable_token_probe or self.options.enable_context_probe or self.options.enable_fingerprint_probe):
             branch_evidence, branch_results, context_truth_score, prompt_injection_risk = analyze_branch_evidence(
                 probe_results=probe_results,
                 traces=self.adapter.trace_store.traces,
@@ -113,6 +120,7 @@ class AuditEngine:
             degraded_modes=[
                 *(evidence_run.degraded_modes if evidence_run else []),
                 *_generation_degraded_modes(self.adapter.trace_store.traces),
+                *(_circuit_degraded_modes(circuit_error) if circuit_error else []),
             ],
             corpus_metadata=evidence_run.corpus_metadata if evidence_run else [],
             strict_mode=self.options.strict_mode,
@@ -169,4 +177,79 @@ def _generation_degraded_modes(traces: list[Trace]) -> list[str]:
         message = str(error.get("message") or "Probe request failed.")
         degraded.append(f"probe:{trace.probe_id}: {error_type}: {message}")
     return degraded
+
+
+def _generation_error_results(traces: list[Trace], existing: list[ProbeResult], language: str | None) -> list[ProbeResult]:
+    from .i18n import t
+
+    existing_names = {item.name for item in existing if item.category == "operational"}
+    results: list[ProbeResult] = []
+    for trace in traces:
+        error = trace.reply.meta.get("generation_error")
+        if not isinstance(error, dict):
+            continue
+        error_type = str(error.get("type") or "Error")
+        name = f"probe_timeout:{trace.probe_id}" if error_type == "TimeoutError" else f"probe_error:{trace.probe_id}"
+        if name in existing_names:
+            continue
+        results.append(
+            ProbeResult(
+                category="operational",
+                name=name,
+                score=0.0,
+                status="fail",
+                detail=t(
+                    "operational.probe_failed",
+                    language,
+                    category=trace.category,
+                    probe_id=trace.probe_id,
+                    error_type=error_type,
+                    latency_ms=trace.latency_ms,
+                ),
+                evidence={
+                    "probe_id": trace.probe_id,
+                    "probe_category": trace.category,
+                    "error_type": error_type,
+                    "message": str(error.get("message") or "Probe request failed."),
+                    "latency_ms": trace.latency_ms,
+                    "timed_out": error_type == "TimeoutError",
+                },
+            )
+        )
+    return results
+
+
+def _circuit_degraded_modes(error: ProbeCircuitOpen) -> list[str]:
+    return [
+        f"audit_terminated: endpoint anomaly at {error.category}/{error.probe_id}; "
+        f"{error.error_type}: {error.message} No further detection requests were sent."
+    ]
+
+
+def _endpoint_anomaly_result(error: ProbeCircuitOpen, language: str | None) -> ProbeResult:
+    from .i18n import t
+
+    return ProbeResult(
+        category="operational",
+        name="endpoint_unresponsive" if error.error_type in {"TimeoutError", "CancelledError"} else "endpoint_request_failure",
+        score=0.0,
+        status="fail",
+        detail=t(
+            "operational.audit_terminated",
+            language,
+            category=error.category,
+            probe_id=error.probe_id,
+            error_type=error.error_type,
+            consecutive_errors=error.consecutive_errors,
+        ),
+        evidence={
+            "audit_terminated": True,
+            "probe_id": error.probe_id,
+            "probe_category": error.category,
+            "error_type": error.error_type,
+            "message": error.message,
+            "consecutive_errors": error.consecutive_errors,
+            "further_requests_sent": False,
+        },
+    )
 

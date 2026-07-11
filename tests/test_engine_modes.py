@@ -81,9 +81,11 @@ class EngineModeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_full_mode_returns_report_when_a_fingerprint_probe_times_out(self) -> None:
         timed_out = False
+        calls = 0
 
         async def flaky_generate(prompt: str, **kwargs):
-            nonlocal timed_out
+            nonlocal timed_out, calls
+            calls += 1
             if "Audit nonce: fp-" in prompt and not timed_out:
                 timed_out = True
                 raise TimeoutError
@@ -102,11 +104,49 @@ class EngineModeTests(unittest.IsolatedAsyncioTestCase):
         ).run()
 
         self.assertTrue(timed_out)
+        self.assertEqual(calls, len(adapter.trace_store.traces))
+        self.assertNotEqual(adapter.trace_store.traces[-1].reply.raw_type, "generation_error")
         self.assertTrue(report.probe_results)
         self.assertEqual(report.trace_summary["generation_error_count"], 1)
         self.assertEqual(report.trace_summary["generation_errors_by_type"], {"TimeoutError": 1})
         self.assertTrue(any("TimeoutError" in item for item in report.degraded_modes))
-        self.assertTrue(any(trace.reply.raw_type == "generation_error" for trace in adapter.trace_store.traces))
+        anomaly = next(item for item in report.probe_results if item.name.startswith("probe_timeout:"))
+        self.assertTrue(anomaly.evidence["timed_out"])
+        self.assertFalse(anomaly.evidence.get("audit_terminated", False))
+
+    async def test_repeated_request_failures_open_circuit_and_preserve_details(self) -> None:
+        calls = 0
+
+        async def broken_generate(prompt: str, **kwargs):
+            nonlocal calls
+            calls += 1
+            raise ConnectionError("upstream disconnected")
+
+        adapter = GenerateAdapter("fake", "provider-a", "gpt-test", broken_generate, TraceStore())
+        report = await AuditEngine(adapter, AuditOptions(enable_protocol_probe=True, language="zh-CN")).run()
+
+        self.assertEqual(calls, 3)
+        self.assertEqual(report.trace_summary["generation_error_count"], 3)
+        anomaly = next(item for item in report.probe_results if item.name == "endpoint_request_failure")
+        self.assertEqual(anomaly.evidence["error_type"], "ConnectionError")
+        self.assertEqual(anomaly.evidence["consecutive_errors"], 3)
+        self.assertIn("检测已提前结束", anomaly.detail)
+
+    async def test_three_consecutive_timeouts_stop_further_probes(self) -> None:
+        calls = 0
+
+        async def timed_out_generate(prompt: str, **kwargs):
+            nonlocal calls
+            calls += 1
+            raise TimeoutError
+
+        adapter = GenerateAdapter("fake", "provider-a", "gpt-test", timed_out_generate, TraceStore())
+        report = await AuditEngine(adapter, AuditOptions(enable_protocol_probe=True)).run()
+
+        self.assertEqual(calls, 3)
+        self.assertEqual(len([item for item in report.probe_results if item.name.startswith("probe_timeout:")]), 3)
+        termination = next(item for item in report.probe_results if item.name == "endpoint_unresponsive")
+        self.assertEqual(termination.evidence["consecutive_errors"], 3)
 
 
 if __name__ == "__main__":

@@ -44,13 +44,20 @@ def build_report(
     confidence = protocol_value * 0.25 + token_value * 0.25 + fingerprint_value * 0.25 + context_value * 0.15 + 0.10
     if strict_mode:
         confidence -= 0.05 * sum(1 for item in probe_results if item.status == "fail")
+    endpoint_anomaly = next((item for item in probe_results if item.evidence.get("audit_terminated") is True), None)
+    if endpoint_anomaly is not None:
+        confidence = min(confidence, 0.35)
     confidence = round(clamp(confidence), 4)
     proxy_probability = _proxy_probability(protocol_value, token_features, fingerprint_result, traces)
+    if endpoint_anomaly is not None:
+        proxy_probability = max(proxy_probability, 0.65)
     mixture_detection = detect_mixture_or_provider_switching(probe_results=probe_results, traces=traces, token_features=token_features, fingerprint_result=fingerprint_result)
     mixture_probability = mixture_detection.probability
     prompt_injection_risk = 0.0 if prompt_injection_risk is None else prompt_injection_risk
     drift_risk = _drift_risk(branch_evidence or [])
     findings = _findings(protocol_score, token_features, fingerprint_result, proxy_probability, mixture_probability, degraded_modes, mixture_detection.findings, language)
+    if endpoint_anomaly is not None:
+        findings.insert(0, endpoint_anomaly.detail)
     risk_level = _risk_level(confidence, proxy_probability, token_truth_score, fingerprint_result.spoofing_risk if fingerprint_result else None, prompt_injection_risk, drift_risk)
     identity = _provider_probabilities(model_family, confidence, fingerprint_result)
     authenticity = {
