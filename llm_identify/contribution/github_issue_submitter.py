@@ -5,7 +5,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 
-DEFAULT_REPOSITORY = "zty-ui0215/llm-identify-trusted-references"
+DEFAULT_REPOSITORY = "zty-ui0215/astrbot_llm_identify_trusted_references"
 DEFAULT_ISSUE_URL = f"https://github.com/{DEFAULT_REPOSITORY}/issues/new"
 
 

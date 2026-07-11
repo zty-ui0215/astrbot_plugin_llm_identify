@@ -61,19 +61,47 @@ const PAGE_TEXT = {
     settings_saved: "Settings saved.",
     settings_failed: "Settings save failed.",
     enable_auxiliary_judge: "Enable auxiliary LLM judge",
+    enable_data_reporting: "Allow optional data reporting",
+    data_reporting_settings: "Optional Data Reporting",
+    data_reporting_hint: "Choose whether to show a voluntary prompt for sharing sanitized official-model fingerprint data after an eligible audit.",
     assistant_source: "Assistant model source",
     source_astrbot: "AstrBot connected model",
     source_openai: "OpenAI-compatible API",
     assistant_astrbot_model: "AstrBot auxiliary model",
     api_key_saved: "An API key is already saved. Leave the field blank to keep it.",
+    api_key_placeholder: "Leave blank to keep saved key",
+    close: "Close",
     aux_direct_required: "OpenAI-compatible auxiliary mode requires Base URL, API Key, and Model.",
     assistant_weights: "Auxiliary detection items and weights",
+    aux_behavioral_style: "General answer style, hedging, verbosity, and formatting habits.",
+    aux_reasoning_structure: "Reasoning organization, correction behavior, and final-answer discipline.",
+    aux_knowledge_boundary_honesty: "Handling of uncertain or non-public facts without fabrication.",
+    aux_safety_refusal_policy: "Benign-versus-risky boundaries and safe alternative style.",
+    aux_format_instruction_following: "Compliance with JSON, CSV, length, and exact-output requirements.",
+    aux_unicode_tokenization_artifacts: "Unicode, escaping, Markdown, and tokenizer-adjacent behavior.",
+    aux_sampling_randomness_stability: "Repeated-output variability and deterministic constraints.",
+    aux_scientific_probe_quality: "Quality of controlled, standards-aligned audit questions.",
+    aux_routing_sidechannel_consistency: "Streaming, route stability, and inference-stack consistency.",
+    aux_public_model_docs_match: "Fit with public model documentation and capability disclosures.",
+    aux_label_behavioral_style: "Behavioral style", aux_label_reasoning_structure: "Reasoning structure",
+    aux_label_knowledge_boundary_honesty: "Knowledge-boundary honesty", aux_label_safety_refusal_policy: "Safety refusal policy",
+    aux_label_format_instruction_following: "Format instruction following", aux_label_unicode_tokenization_artifacts: "Unicode/tokenization artifacts",
+    aux_label_sampling_randomness_stability: "Sampling stability", aux_label_scientific_probe_quality: "Scientific probe quality",
+    aux_label_routing_sidechannel_consistency: "Routing consistency", aux_label_public_model_docs_match: "Public documentation match",
     contribution_title: "Voluntary official fingerprint contribution",
-    contribution_hint: "A sanitized candidate package is available for this official endpoint audit.",
-    push_contribution: "Submit",
-    not_now: "Not now",
+    contribution_hint: "We found that you are testing a model provided directly by an official platform. Would you like to share a sanitized data package to help us build a more complete official model fingerprint library?",
+    push_contribution: "OK",
+    not_now: "No, thanks",
     contribution_pushed: "Contribution page opened.",
-    contribution_unavailable: "Run a full direct audit against an official API before contributing."
+    contribution_unavailable: "Run a full audit with an official API provider before contributing.",
+    audit_running_elapsed: "Audit in progress, elapsed {seconds} seconds",
+    stop_audit: "Stop",
+    stop_confirm_title: "Stop the audit?",
+    stop_confirm_hint: "All active audits will be terminated and unfinished data will be cleared.",
+    cancel: "Cancel",
+    confirm_stop: "Confirm stop",
+    audit_stopped: "Audit stopped. Unfinished data was cleared.",
+    stop_failed: "Failed to stop the audit."
   },
   "zh-CN": {
     unknown: "未知", idle: "空闲", running: "运行中", none: "无", pass: "通过", fail: "失败", warning: "警告",
@@ -132,19 +160,47 @@ const PAGE_TEXT = {
     settings_saved: "设置已保存。",
     settings_failed: "设置保存失败。",
     enable_auxiliary_judge: "启用辅助 LLM 判断",
+    enable_data_reporting: "同意可选的数据上报",
+    data_reporting_settings: "可选数据上报",
+    data_reporting_hint: "选择是否在符合条件的检测完成后显示志愿分享脱敏官方模型指纹数据的提示。",
     assistant_source: "辅助模型来源",
     source_astrbot: "AstrBot 已接入模型",
     source_openai: "OpenAI 兼容协议 API",
     assistant_astrbot_model: "AstrBot 辅助模型",
     api_key_saved: "已保存 API Key。留空将继续使用已保存的 Key。",
+    api_key_placeholder: "留空以继续使用已保存的 Key",
+    close: "关闭",
     aux_direct_required: "OpenAI 兼容辅助模式需要填写 Base URL、API Key 和模型。",
     assistant_weights: "辅助检测项目和权重",
+    aux_behavioral_style: "整体回答风格、保留措辞、详略程度和格式习惯。",
+    aux_reasoning_structure: "推理组织、纠错行为和最终答案规范。",
+    aux_knowledge_boundary_honesty: "对不确定或非公开事实的诚实处理，避免编造。",
+    aux_safety_refusal_policy: "安全与风险边界的处理及安全替代方案风格。",
+    aux_format_instruction_following: "对 JSON、CSV、长度和精确输出要求的遵循程度。",
+    aux_unicode_tokenization_artifacts: "Unicode、转义、Markdown 及分词器相关行为。",
+    aux_sampling_randomness_stability: "重复输出的变化程度和确定性约束表现。",
+    aux_scientific_probe_quality: "生成受控、符合标准且有审计价值的问题的能力。",
+    aux_routing_sidechannel_consistency: "流式输出、路由稳定性和推理栈一致性信号。",
+    aux_public_model_docs_match: "与公开模型文档及能力说明的匹配程度。",
+    aux_label_behavioral_style: "回答风格", aux_label_reasoning_structure: "推理结构",
+    aux_label_knowledge_boundary_honesty: "知识边界诚实性", aux_label_safety_refusal_policy: "安全拒答策略",
+    aux_label_format_instruction_following: "格式指令遵循", aux_label_unicode_tokenization_artifacts: "Unicode 与分词特征",
+    aux_label_sampling_randomness_stability: "采样稳定性", aux_label_scientific_probe_quality: "科学探测质量",
+    aux_label_routing_sidechannel_consistency: "路由一致性", aux_label_public_model_docs_match: "公开文档匹配度",
     contribution_title: "志愿上报官方模型指纹",
-    contribution_hint: "检测到官方 API，本次检测已生成脱敏模型指纹候选包。是否一键提交到志愿库？",
-    push_contribution: "一键上报",
-    not_now: "暂不",
+    contribution_hint: "我们发现您检测的是官方平台直接提供的模型。您是否愿意分享脱敏后的数据包，帮助我们建立更加完善的官方模型指纹库？",
+    push_contribution: "好的",
+    not_now: "不，谢谢",
     contribution_pushed: "已打开上报页面。",
-    contribution_unavailable: "请先对官方 API 运行完整直连检测。"
+    contribution_unavailable: "请先使用官方 API 提供商运行完整检测。",
+    audit_running_elapsed: "审计正在进行，已持续 {seconds} 秒",
+    stop_audit: "停止",
+    stop_confirm_title: "是否停止运行",
+    stop_confirm_hint: "确认后将强制停止所有审计并清除未完成的所有数据。",
+    cancel: "取消",
+    confirm_stop: "确认停止",
+    audit_stopped: "审计已停止，未完成的数据已清除。",
+    stop_failed: "停止审计失败。"
   },
   "ja-JP": {
     unknown: "不明", idle: "待機中", running: "実行中", none: "なし", pass: "合格", fail: "失敗", warning: "警告",
@@ -203,19 +259,47 @@ const PAGE_TEXT = {
     settings_saved: "設定を保存しました。",
     settings_failed: "設定の保存に失敗しました。",
     enable_auxiliary_judge: "補助 LLM 判定を有効にする",
+    enable_data_reporting: "任意のデータ提供に同意する",
+    data_reporting_settings: "任意のデータ提供",
+    data_reporting_hint: "対象となる監査の完了後に、サニタイズ済み公式モデル指紋データの任意提供を案内するかどうかを選択します。",
     assistant_source: "補助モデルのソース",
     source_astrbot: "AstrBot 接続済みモデル",
     source_openai: "OpenAI 互換 API",
     assistant_astrbot_model: "AstrBot 補助モデル",
     api_key_saved: "API Key は保存済みです。空欄のままにすると保存済みの Key を使用します。",
+    api_key_placeholder: "空欄の場合は保存済みの Key を使用",
+    close: "閉じる",
     aux_direct_required: "OpenAI 互換の補助モードでは Base URL、API Key、Model が必要です。",
     assistant_weights: "補助検出項目と重み",
+    aux_behavioral_style: "回答全体のスタイル、留保表現、詳しさ、書式の傾向。",
+    aux_reasoning_structure: "推論の構成、訂正動作、最終回答の規律。",
+    aux_knowledge_boundary_honesty: "不確実または非公開の事実を捏造せずに扱う姿勢。",
+    aux_safety_refusal_policy: "安全・危険の境界判断と安全な代替案の提示スタイル。",
+    aux_format_instruction_following: "JSON、CSV、長さ、完全一致出力の指示への準拠。",
+    aux_unicode_tokenization_artifacts: "Unicode、エスケープ、Markdown、トークナイザー関連の挙動。",
+    aux_sampling_randomness_stability: "反復出力の変動性と決定的制約への対応。",
+    aux_scientific_probe_quality: "統制され、標準に沿った監査質問を生成する能力。",
+    aux_routing_sidechannel_consistency: "ストリーミング、経路安定性、推論スタックの一貫性。",
+    aux_public_model_docs_match: "公開モデル文書および能力開示との一致度。",
+    aux_label_behavioral_style: "回答スタイル", aux_label_reasoning_structure: "推論構造",
+    aux_label_knowledge_boundary_honesty: "知識境界の誠実性", aux_label_safety_refusal_policy: "安全拒否ポリシー",
+    aux_label_format_instruction_following: "書式指示への準拠", aux_label_unicode_tokenization_artifacts: "Unicode・トークン化特性",
+    aux_label_sampling_randomness_stability: "サンプリング安定性", aux_label_scientific_probe_quality: "科学的プローブ品質",
+    aux_label_routing_sidechannel_consistency: "ルーティング一貫性", aux_label_public_model_docs_match: "公開文書との一致度",
     contribution_title: "公式モデル指紋の任意提供",
-    contribution_hint: "公式 API が検出され、この監査からサニタイズ済みモデル指紋候補パッケージを生成しました。任意リポジトリへ送信しますか。",
-    push_contribution: "ワンクリック送信",
-    not_now: "後で",
+    contribution_hint: "公式プラットフォームから直接提供されているモデルを検出していることが分かりました。公式モデル指紋ライブラリをより充実させるため、サニタイズ済みデータパッケージを共有しますか。",
+    push_contribution: "はい",
+    not_now: "いいえ、結構です",
     contribution_pushed: "送信ページを開きました。",
-    contribution_unavailable: "提供前に公式 API への完全な直接監査を実行してください。"
+    contribution_unavailable: "提供前に公式 API プロバイダーで完全監査を実行してください。",
+    audit_running_elapsed: "監査を実行中です。経過時間: {seconds} 秒",
+    stop_audit: "停止",
+    stop_confirm_title: "監査を停止しますか",
+    stop_confirm_hint: "確認すると、実行中のすべての監査を強制終了し、未完了のデータを消去します。",
+    cancel: "キャンセル",
+    confirm_stop: "停止を確認",
+    audit_stopped: "監査を停止し、未完了のデータを消去しました。",
+    stop_failed: "監査を停止できませんでした。"
   }
 };
 let bridgeReadyPromise = null;
@@ -223,8 +307,21 @@ let languageManuallySelected = readLanguageManualFlag();
 let currentLanguage = normalizeLanguage(readStoredLanguage() || document.documentElement.lang || "en-US");
 let lastStatusData = null;
 let currentContribution = null;
+let auditStartedAt = null;
+let auditElapsedTimer = null;
+let auditStatusPoller = null;
+let auditStatusPollBusy = false;
+let auditStopRequested = false;
 
 const els = {
+  normalPanel: document.getElementById("normalPanel"),
+  auditRunningView: document.getElementById("auditRunningView"),
+  auditElapsedText: document.getElementById("auditElapsedText"),
+  stopAuditBtn: document.getElementById("stopAuditBtn"),
+  stopConfirmModal: document.getElementById("stopConfirmModal"),
+  closeStopConfirmBtn: document.getElementById("closeStopConfirmBtn"),
+  cancelStopBtn: document.getElementById("cancelStopBtn"),
+  confirmStopBtn: document.getElementById("confirmStopBtn"),
   languageSelect: document.getElementById("languageSelect"),
   auditTabBtn: document.getElementById("auditTabBtn"),
   settingsTabBtn: document.getElementById("settingsTabBtn"),
@@ -233,6 +330,7 @@ const els = {
   astrbotProviderField: document.getElementById("astrbotProviderField"),
   astrbotProvider: document.getElementById("astrbotProvider"),
   auxEnabled: document.getElementById("auxEnabled"),
+  dataReportConsent: document.getElementById("dataReportConsent"),
   auxMode: document.getElementById("auxMode"),
   auxProvider: document.getElementById("auxProvider"),
   auxAstrbotField: document.getElementById("auxAstrbotField"),
@@ -265,6 +363,7 @@ const els = {
   contributionModal: document.getElementById("contributionModal"),
   contributionText: document.getElementById("contributionText"),
   dismissContributionBtn: document.getElementById("dismissContributionBtn"),
+  closeContributionBtn: document.getElementById("closeContributionBtn"),
   pushContributionBtn: document.getElementById("pushContributionBtn"),
   probeList: document.getElementById("probeList"),
   rawReport: document.getElementById("rawReport"),
@@ -335,7 +434,61 @@ function renderStaticText() {
     const key = node.dataset.i18n;
     node.textContent = text(key, node.textContent);
   });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((node) => {
+    node.placeholder = text(node.dataset.i18nPlaceholder, node.placeholder);
+  });
+  document.querySelectorAll("[data-i18n-aria-label]").forEach((node) => {
+    node.setAttribute("aria-label", text(node.dataset.i18nAriaLabel, node.getAttribute("aria-label") || ""));
+  });
   if (els.languageSelect) els.languageSelect.value = currentLanguage;
+  updateAuditElapsedText();
+}
+
+function updateAuditElapsedText() {
+  if (!els.auditElapsedText) return;
+  const startedAt = Number(auditStartedAt || Date.now() / 1000);
+  const seconds = Math.max(0, Math.floor(Date.now() / 1000 - startedAt));
+  els.auditElapsedText.textContent = text("audit_running_elapsed").replace("{seconds}", String(seconds));
+}
+
+function setAuditRunning(running, startedAt = null) {
+  const active = Boolean(running);
+  if (els.normalPanel) els.normalPanel.hidden = active;
+  if (els.auditRunningView) els.auditRunningView.hidden = !active;
+  if (active) {
+    const serverStartedAt = Number(startedAt || 0);
+    if (serverStartedAt > 0) auditStartedAt = serverStartedAt;
+    else if (!auditStartedAt) auditStartedAt = Math.floor(Date.now() / 1000);
+    updateAuditElapsedText();
+    if (!auditElapsedTimer) auditElapsedTimer = window.setInterval(updateAuditElapsedText, 1000);
+    if (!auditStatusPoller) auditStatusPoller = window.setInterval(pollAuditStatus, 2000);
+    return;
+  }
+  auditStartedAt = null;
+  if (auditElapsedTimer) window.clearInterval(auditElapsedTimer);
+  if (auditStatusPoller) window.clearInterval(auditStatusPoller);
+  auditElapsedTimer = null;
+  auditStatusPoller = null;
+}
+
+async function pollAuditStatus() {
+  if (auditStatusPollBusy) return;
+  auditStatusPollBusy = true;
+  try {
+    await loadStatus({ preserveMessage: true });
+  } catch (error) {
+    // A transient status failure must not replace the running screen.
+  } finally {
+    auditStatusPollBusy = false;
+  }
+}
+
+function showStopConfirmModal() {
+  if (els.stopConfirmModal) els.stopConfirmModal.hidden = false;
+}
+
+function hideStopConfirmModal() {
+  if (els.stopConfirmModal) els.stopConfirmModal.hidden = true;
 }
 
 async function initHostLanguage() {
@@ -507,6 +660,7 @@ function normalizeResponse(payload) {
 
 function renderStatus(data) {
   lastStatusData = data;
+  setAuditRunning(data.running, data.audit_started_at);
   els.providerId.textContent = data.provider_id || text("unknown");
   els.claimedModel.textContent = data.claimed_model || text("unknown");
   els.modelFamily.textContent = data.model_family_guess || text("unknown");
@@ -537,6 +691,7 @@ function renderProviderOptions(providers, selectedProviderId, selectEl = els.ast
 function renderSettings(config, providers) {
   if (!els.auxMode) return;
   els.auxEnabled.checked = Boolean(config.enable_auxiliary_llm_judge);
+  if (els.dataReportConsent) els.dataReportConsent.checked = Boolean(config.enable_voluntary_data_reporting);
   els.auxMode.value = config.auxiliary_judge_mode || "astrbot";
   renderProviderOptions(providers, config.auxiliary_judge_provider_id || config.page_provider_id || "", els.auxProvider);
   els.auxBaseUrl.value = config.auxiliary_judge_base_url || "";
@@ -552,10 +707,13 @@ function renderAuxWeights(items) {
   const list = Array.isArray(items) ? items : [];
   els.auxWeightList.innerHTML = list.map((item) => {
     const weight = Math.round(Number(item.weight || 0) * 100);
+    const itemId = String(item.id || "");
+    const itemLabel = text(`aux_label_${itemId}`, itemId || text("unknown"));
+    const description = text(`aux_${itemId}`, item.description || "");
     return `
       <article class="weight-item">
-        <strong>${escapeHtml(item.id || text("unknown"))}<span>${weight}%</span></strong>
-        <p>${escapeHtml(item.description || "")}</p>
+        <strong>${escapeHtml(itemLabel)}<span>${weight}%</span></strong>
+        <p>${escapeHtml(description)}</p>
       </article>
     `;
   }).join("");
@@ -650,14 +808,30 @@ function showContributionModal(contribution) {
 function updateContributionModalText(contribution) {
   if (!els.contributionText) return;
   const endpoint = contribution.endpoint || {};
-  const provider = endpoint.provider || text("unknown");
-  const host = endpoint.host || "";
-  els.contributionText.textContent = `${text("contribution_hint")} ${provider} ${host}`.trim();
+  els.contributionText.textContent = text("contribution_hint");
   if (els.pushContributionBtn) els.pushContributionBtn.dataset.issueUrl = contribution.issue_url || "";
 }
 
 function hideContributionModal() {
   if (els.contributionModal) els.contributionModal.hidden = true;
+}
+
+window.hideContributionModal = hideContributionModal;
+
+function handleContributionModalClick(event) {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  if (target.closest("#closeContributionBtn") || target.closest("#dismissContributionBtn")) {
+    event.preventDefault();
+    event.stopPropagation();
+    hideContributionModal();
+    return;
+  }
+  if (target.closest("#pushContributionBtn")) {
+    event.preventDefault();
+    event.stopPropagation();
+    pushContribution();
+  }
 }
 
 function localizeValue(value) {
@@ -673,8 +847,8 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-async function loadStatus() {
-  setMessage("");
+async function loadStatus(options = {}) {
+  if (!options.preserveMessage) setMessage("");
   const providerId = els.astrbotProvider?.value || "";
   const query = new URLSearchParams({ language: currentLanguage });
   if (providerId) query.set("provider_id", providerId);
@@ -703,24 +877,66 @@ async function runDetection() {
   const body = buildDetectBody();
   if (!body) return;
   hideContributionModal();
+  hideStopConfirmModal();
+  auditStopRequested = false;
+  setAuditRunning(true, Math.floor(Date.now() / 1000));
   els.detectBtn.disabled = true;
   els.refreshBtn.disabled = true;
   body.language = currentLanguage;
   let completed = false;
+  let reportCreatedAt = null;
+  let detectedContribution = null;
   setMessage(body.full ? text("running_full") : text("running_quick"));
   try {
     const data = await fetchJson("/detect", { method: "POST", body: JSON.stringify(body) });
     renderReport(data.report);
+    reportCreatedAt = data.report?.created_at || null;
+    detectedContribution = data.contribution || null;
     completed = true;
     setMessage(text("audit_complete"));
   } catch (error) {
-    setMessage(error.message || text("audit_failed"), "error");
+    if (!auditStopRequested) setMessage(error.message || text("audit_failed"), "error");
   } finally {
     els.detectBtn.disabled = false;
     els.refreshBtn.disabled = false;
-    const status = await loadStatus().catch(() => null);
-    if (completed && status?.contribution?.available) showContributionModal(status.contribution);
+    const status = await loadStatus({ preserveMessage: auditStopRequested }).catch(() => null);
+    if (completed && shouldShowContributionModal(detectedContribution, reportCreatedAt, { trustCurrentResponse: true })) {
+      showContributionModal(detectedContribution);
+    } else if (completed && shouldShowContributionModal(status?.contribution, reportCreatedAt)) {
+      showContributionModal(status.contribution);
+    }
   }
+}
+
+async function stopAudit() {
+  auditStopRequested = true;
+  if (els.stopAuditBtn) els.stopAuditBtn.disabled = true;
+  if (els.confirmStopBtn) els.confirmStopBtn.disabled = true;
+  try {
+    await fetchJson("/stop", { method: "POST", body: JSON.stringify({}) });
+    hideStopConfirmModal();
+    setAuditRunning(false);
+    await loadStatus({ preserveMessage: true }).catch(() => null);
+    setMessage(text("audit_stopped"));
+  } catch (error) {
+    auditStopRequested = false;
+    hideStopConfirmModal();
+    setMessage(error.message || text("stop_failed"), "error");
+    await loadStatus({ preserveMessage: true }).catch(() => null);
+  } finally {
+    if (els.stopAuditBtn) els.stopAuditBtn.disabled = false;
+    if (els.confirmStopBtn) els.confirmStopBtn.disabled = false;
+  }
+}
+
+function shouldShowContributionModal(contribution, reportCreatedAt, options = {}) {
+  if (!contribution?.available || !contribution?.enabled) return false;
+  if (options.trustCurrentResponse) return true;
+  if (!reportCreatedAt) return false;
+  const contributionCreatedAt = Number(contribution.report_created_at || 0);
+  const detectedCreatedAt = Number(reportCreatedAt || 0);
+  if (!contributionCreatedAt || !detectedCreatedAt) return false;
+  return Math.abs(contributionCreatedAt - detectedCreatedAt) <= 1;
 }
 
 function syncModeFields() {
@@ -747,6 +963,7 @@ function buildSettingsBody() {
   const mode = els.auxMode?.value || "astrbot";
   const body = {
     enable_auxiliary_llm_judge: Boolean(els.auxEnabled?.checked),
+    enable_voluntary_data_reporting: Boolean(els.dataReportConsent?.checked),
     auxiliary_judge_mode: mode,
     auxiliary_judge_provider_id: els.auxProvider?.value || "",
     auxiliary_judge_base_url: els.auxBaseUrl?.value.trim() || "",
@@ -800,6 +1017,8 @@ async function pushContribution() {
   }
 }
 
+window.pushContribution = pushContribution;
+
 els.languageSelect?.addEventListener("change", () => setLanguage(els.languageSelect.value, { manual: true }));
 els.auditTabBtn?.addEventListener("click", () => switchView("audit"));
 els.settingsTabBtn?.addEventListener("click", () => switchView("settings"));
@@ -807,8 +1026,27 @@ els.astrbotProvider?.addEventListener("change", () => loadStatus().catch((error)
 els.refreshBtn.addEventListener("click", () => loadStatus().catch((error) => setMessage(error.message || text("refresh_failed"), "error")));
 els.detectBtn.addEventListener("click", () => runDetection());
 els.saveSettingsBtn?.addEventListener("click", () => saveSettings());
-els.dismissContributionBtn?.addEventListener("click", () => hideContributionModal());
-els.pushContributionBtn?.addEventListener("click", () => pushContribution());
+els.stopAuditBtn?.addEventListener("click", () => showStopConfirmModal());
+els.closeStopConfirmBtn?.addEventListener("click", () => hideStopConfirmModal());
+els.cancelStopBtn?.addEventListener("click", () => hideStopConfirmModal());
+els.confirmStopBtn?.addEventListener("click", () => stopAudit());
+els.dismissContributionBtn?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  hideContributionModal();
+});
+els.closeContributionBtn?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  hideContributionModal();
+});
+els.pushContributionBtn?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  pushContribution();
+});
+els.contributionModal?.addEventListener("click", (event) => handleContributionModalClick(event));
+document.addEventListener("click", (event) => {
+  if (!els.contributionModal || els.contributionModal.hidden) return;
+  handleContributionModalClick(event);
+}, true);
 els.auxMode?.addEventListener("change", () => syncAuxModeFields());
 els.detectMode?.addEventListener("change", () => {
   syncModeFields();

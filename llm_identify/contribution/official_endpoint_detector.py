@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable
 from urllib.parse import urlparse
 
 
@@ -49,6 +49,62 @@ def detect_official_endpoint(base_url: str, allowlist: Iterable[str] | None = No
         if path == normalized or (normalized and path.startswith(normalized + "/")):
             return OfficialEndpoint(provider=str(spec["provider"]), host=host, matched_path=normalized, label=f"{spec['provider']} official endpoint")
     return None
+
+
+def detect_official_provider_endpoint(provider: Any) -> OfficialEndpoint | None:
+    """Resolve an AstrBot provider's effective API URL without relying on its display name."""
+    client = _provider_client(provider)
+    client_urls = _provider_base_url_candidates(client) if client is not None else []
+    if client_urls:
+        for base_url in client_urls:
+            endpoint = detect_official_endpoint(base_url)
+            if endpoint is not None:
+                return endpoint
+        return None
+    for base_url in _provider_base_url_candidates(provider):
+        endpoint = detect_official_endpoint(base_url)
+        if endpoint is not None:
+            return endpoint
+    return None
+
+
+def _provider_client(provider: Any) -> Any:
+    if isinstance(provider, tuple) and len(provider) == 2:
+        provider = provider[1]
+    if isinstance(provider, dict):
+        return provider.get("client")
+    return getattr(provider, "client", None)
+
+
+def _provider_base_url_candidates(provider: Any) -> list[str]:
+    candidates: list[str] = []
+    visited: set[int] = set()
+
+    def collect(value: Any) -> None:
+        if value is None or id(value) in visited:
+            return
+        visited.add(id(value))
+        if isinstance(value, tuple) and len(value) == 2:
+            collect(value[1])
+            return
+        if isinstance(value, dict):
+            for key in ("api_base", "base_url", "api_base_url", "endpoint", "api_url"):
+                append(value.get(key))
+            collect(value.get("provider_config"))
+            return
+        for attr in ("api_base", "base_url", "api_base_url", "endpoint", "api_url"):
+            append(getattr(value, attr, None))
+        collect(getattr(value, "provider_config", None))
+
+    def append(value: Any) -> None:
+        if value is None:
+            return
+        text = str(value).strip()
+        if text and text not in candidates:
+            candidates.append(text)
+
+    collect(provider)
+    return candidates
 
 
 def _with_scheme(value: str) -> str:

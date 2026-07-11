@@ -33,7 +33,19 @@ class GenerateAdapter:
     ) -> ModelReply:
         native_count = await self._native_count(prompt)
         started = time.perf_counter()
-        reply = await self.generate_fn(prompt, **kwargs)
+        try:
+            reply = await self.generate_fn(prompt, **kwargs)
+        except Exception as exc:
+            reply = ModelReply(
+                text="",
+                raw_type="generation_error",
+                meta={
+                    "generation_error": {
+                        "type": type(exc).__name__,
+                        "message": "Probe request timed out." if isinstance(exc, TimeoutError) else "Probe request failed.",
+                    }
+                },
+            )
         latency_ms = int((time.perf_counter() - started) * 1000)
         if native_count is not None:
             reply.meta["native_token_count"] = native_count

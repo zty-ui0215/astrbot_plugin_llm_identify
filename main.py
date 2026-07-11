@@ -23,7 +23,7 @@ try:
     from .llm_identify.contribution.evidence_schema import build_evidence_package
     from .llm_identify.contribution.exporter import ContributionExporter
     from .llm_identify.contribution.github_issue_submitter import DEFAULT_ISSUE_URL, build_github_issue_url
-    from .llm_identify.contribution.official_endpoint_detector import OfficialEndpoint, detect_official_endpoint
+    from .llm_identify.contribution.official_endpoint_detector import OfficialEndpoint, detect_official_endpoint, detect_official_provider_endpoint
     from .llm_identify.dynamic_fingerprint import build_feature_vector
     from .llm_identify.engine import AuditEngine, AuditOptions
     from .llm_identify.evidence import AUXILIARY_JUDGE_ITEMS
@@ -39,7 +39,7 @@ except ImportError:
     from llm_identify.contribution.evidence_schema import build_evidence_package
     from llm_identify.contribution.exporter import ContributionExporter
     from llm_identify.contribution.github_issue_submitter import DEFAULT_ISSUE_URL, build_github_issue_url
-    from llm_identify.contribution.official_endpoint_detector import OfficialEndpoint, detect_official_endpoint
+    from llm_identify.contribution.official_endpoint_detector import OfficialEndpoint, detect_official_endpoint, detect_official_provider_endpoint
     from llm_identify.dynamic_fingerprint import build_feature_vector
     from llm_identify.engine import AuditEngine, AuditOptions
     from llm_identify.evidence import AUXILIARY_JUDGE_ITEMS
@@ -77,14 +77,21 @@ class LLMIdentifyPlugin(Star):
         self.auxiliary_judge_base_url = str(self.config.get("auxiliary_judge_base_url", "") or "").strip()
         self.auxiliary_judge_api_key = str(self.config.get("auxiliary_judge_api_key", "") or "").strip()
         self.auxiliary_judge_model = str(self.config.get("auxiliary_judge_model", "") or "").strip()
+        self.enable_voluntary_data_reporting = self._cfg_bool("enable_voluntary_data_reporting", False)
         self.contribution_export_dir = str(self.config.get("contribution_export_dir", "tmp/contributions") or "tmp/contributions").strip()
         self.contribution_issue_url = str(self.config.get("contribution_issue_url", DEFAULT_ISSUE_URL) or DEFAULT_ISSUE_URL).strip()
+        if self.contribution_issue_url.rstrip("/") == "https://github.com/zty-ui0215/llm-identify-trusted-references/issues/new":
+            self.contribution_issue_url = DEFAULT_ISSUE_URL
         self.strict_mode = self._cfg_bool("strict_mode", False)
         self.default_language = normalize_language(self.config.get("language") or self.config.get("locale"))
         self.last_report: AuditReport | None = None
         self.last_official_endpoint: OfficialEndpoint | None = None
         self.last_contribution_package: dict[str, Any] | None = None
+        self.last_contribution_report_created_at: int | None = None
         self._running = False
+        self._audit_started_at: int | None = None
+        self._active_audit_task: asyncio.Task[Any] | None = None
+        self._active_trace_store: TraceStore | None = None
         self._auxiliary_direct_client: DirectOpenAICompatibleAdapter | None = None
 
     async def initialize(self):
@@ -107,16 +114,22 @@ class LLMIdentifyPlugin(Star):
         if self._running:
             raise RuntimeError(t("error.audit_running", language or self.default_language))
         self._running = True
+        self._audit_started_at = int(time.time())
+        active_task = asyncio.current_task()
+        self._active_audit_task = active_task
+        self._clear_contribution_candidate()
         try:
             provider_id = str(provider_id or "").strip() or await self._get_provider_id(event)
             if not provider_id:
                 raise RuntimeError(t("error.no_provider", language or self.default_language))
-            claimed_model = await self._get_claimed_model(provider_id)
+            provider = await self._get_provider_by_id(provider_id)
+            claimed_model = self._extract_provider_model(provider) or provider_id or "unknown"
 
             async def generate(prompt: str, **kwargs: Any) -> ModelReply:
                 return await asyncio.wait_for(self._ask_current_model(provider_id, prompt, **kwargs), timeout=self.timeout)
 
             trace_store = TraceStore()
+            self._active_trace_store = trace_store
             adapter = GenerateAdapter(
                 adapter_type="astrbot",
                 provider_id=provider_id,
@@ -126,10 +139,15 @@ class LLMIdentifyPlugin(Star):
             )
             report = await AuditEngine(adapter, self._audit_options(full=full, language=language)).run()
             self.last_report = report
-            self._clear_contribution_candidate()
+            if full:
+                self._prepare_contribution_candidate(
+                    official_endpoint=detect_official_provider_endpoint(provider),
+                    report=report,
+                    traces=trace_store.traces,
+                )
             return report
         finally:
-            self._running = False
+            self._finish_active_audit(active_task)
 
     async def run_direct_openai_detection(self, payload: dict[str, Any], *, language: str | None = None) -> AuditReport:
         if self._running:
@@ -144,6 +162,10 @@ class LLMIdentifyPlugin(Star):
         if not model:
             raise RuntimeError(t("error.model_required", language or self.default_language))
         self._running = True
+        self._audit_started_at = int(time.time())
+        active_task = asyncio.current_task()
+        self._active_audit_task = active_task
+        self._clear_contribution_candidate()
         try:
             client = DirectOpenAICompatibleAdapter(base_url=base_url, api_key=api_key, model=model, timeout=self.timeout)
 
@@ -151,6 +173,7 @@ class LLMIdentifyPlugin(Star):
                 return await asyncio.wait_for(client.generate(prompt, **kwargs), timeout=self.timeout)
 
             trace_store = TraceStore()
+            self._active_trace_store = trace_store
             adapter = GenerateAdapter(
                 adapter_type="direct_openai_compatible",
                 provider_id=f"direct-openai-compatible:{self._safe_endpoint_label(base_url)}",
@@ -161,10 +184,11 @@ class LLMIdentifyPlugin(Star):
             )
             report = await AuditEngine(adapter, self._audit_options(full=bool(payload.get("full", True)), language=language)).run()
             self.last_report = report
-            self._prepare_contribution_candidate(base_url=base_url, report=report, traces=trace_store.traces)
+            if bool(payload.get("full", True)):
+                self._prepare_contribution_candidate(base_url=base_url, report=report, traces=trace_store.traces)
             return report
         finally:
-            self._running = False
+            self._finish_active_audit(active_task)
 
     async def _ask_current_model(self, provider_id: str, prompt: str, **kwargs: Any) -> ModelReply:
         llm_generate = getattr(self.context, "llm_generate", None)
@@ -268,6 +292,10 @@ class LLMIdentifyPlugin(Star):
         return None
 
     async def _get_claimed_model(self, provider_id: str) -> str:
+        provider = await self._get_provider_by_id(provider_id)
+        return self._extract_provider_model(provider) or provider_id or "unknown"
+
+    async def _get_provider_by_id(self, provider_id: str) -> Any:
         provider = None
         getter = getattr(self.context, "get_provider_by_id", None)
         if callable(getter):
@@ -277,7 +305,12 @@ class LLMIdentifyPlugin(Star):
                     provider = await provider
             except Exception:
                 provider = None
-        return self._extract_provider_model(provider) or provider_id or "unknown"
+        if provider is not None:
+            return provider
+        for candidate in await self._get_all_providers():
+            if self._extract_provider_id(candidate) == provider_id:
+                return candidate
+        return None
 
     def _register_page_api_if_available(self) -> None:
         register_web_api = getattr(self.context, "register_web_api", None)
@@ -287,6 +320,7 @@ class LLMIdentifyPlugin(Star):
         routes: list[tuple[str, Callable[..., Awaitable[dict[str, Any]]], list[str], str]] = [
             ("/status", self.page_status, ["GET"], "LLM Identify page status"),
             ("/detect", self.page_detect, ["POST"], "LLM Identify run detection"),
+            ("/stop", self.page_stop, ["POST"], "LLM Identify stop active detection"),
             ("/settings", self.page_settings, ["POST"], "LLM Identify page settings"),
             ("/contribution", self.page_contribution, ["POST"], "LLM Identify voluntary contribution export"),
         ]
@@ -304,6 +338,7 @@ class LLMIdentifyPlugin(Star):
         return self._ok(
             {
                 "running": self._running,
+                "audit_started_at": self._audit_started_at,
                 "provider_id": provider_id or "unknown",
                 "claimed_model": claimed_model,
                 "model_family_guess": detect_model_family(claimed_model, provider_id or ""),
@@ -326,10 +361,31 @@ class LLMIdentifyPlugin(Star):
             else:
                 provider_id = str(payload.get("provider_id") or "").strip() or None
                 report = await self.run_detection(None, full=full, language=language, provider_id=provider_id)
-            return self._ok({"report": self._report_payload(report, language)})
+            return self._ok(
+                {
+                    "report": self._report_payload(report, language),
+                    "contribution": self._contribution_status(),
+                }
+            )
+        except asyncio.CancelledError:
+            return self._error("Audit stopped.")
         except Exception as exc:
             logger.warning("[LLMIdentify] page detect failed: %s", exc, exc_info=True)
             return self._error(str(exc))
+
+    async def page_stop(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        task = self._active_audit_task
+        stopped = bool(task is not None and not task.done())
+        if stopped:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.debug("[LLMIdentify] active audit finished with an error while stopping", exc_info=True)
+        self._clear_unfinished_audit_data()
+        return self._ok({"stopped": stopped, "running": self._running})
 
     async def page_contribution(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         try:
@@ -337,8 +393,10 @@ class LLMIdentifyPlugin(Star):
             action = str(payload.get("action") or "status").strip().lower()
             if action == "status":
                 return self._ok(self._contribution_status())
+            if not self.enable_voluntary_data_reporting:
+                return self._error("Voluntary data reporting is disabled in plugin page settings.")
             if self.last_contribution_package is None:
-                return self._error("No official-endpoint contribution candidate is available. Run a full direct audit against an official API first.")
+                return self._error("No official-endpoint contribution candidate is available. Run a full audit with an official API provider first.")
             if action == "issue_url":
                 return self._ok({"issue_url": build_github_issue_url(self.last_contribution_package, self.contribution_issue_url)})
             if action == "export":
@@ -371,6 +429,7 @@ class LLMIdentifyPlugin(Star):
         mode = self._choice_value(payload.get("auxiliary_judge_mode"), self.auxiliary_judge_mode, {"astrbot", "openai_compatible"})
         settings: dict[str, Any] = {
             "enable_auxiliary_llm_judge": self._bool_value(payload.get("enable_auxiliary_llm_judge"), self.enable_auxiliary_llm_judge),
+            "enable_voluntary_data_reporting": self._bool_value(payload.get("enable_voluntary_data_reporting"), self.enable_voluntary_data_reporting),
             "auxiliary_judge_mode": mode,
             "auxiliary_judge_provider_id": str(payload.get("auxiliary_judge_provider_id") or "").strip(),
             "auxiliary_judge_base_url": str(payload.get("auxiliary_judge_base_url") or "").strip(),
@@ -393,12 +452,15 @@ class LLMIdentifyPlugin(Star):
 
     def _apply_page_settings(self, settings: dict[str, Any]) -> None:
         self.enable_auxiliary_llm_judge = bool(settings["enable_auxiliary_llm_judge"])
+        self.enable_voluntary_data_reporting = bool(settings["enable_voluntary_data_reporting"])
         self.auxiliary_judge_mode = str(settings["auxiliary_judge_mode"])
         self.auxiliary_judge_provider_id = str(settings["auxiliary_judge_provider_id"])
         self.auxiliary_judge_base_url = str(settings["auxiliary_judge_base_url"])
         self.auxiliary_judge_model = str(settings["auxiliary_judge_model"])
         if "auxiliary_judge_api_key" in settings:
             self.auxiliary_judge_api_key = str(settings["auxiliary_judge_api_key"])
+        if not self.enable_voluntary_data_reporting:
+            self._clear_contribution_candidate()
         self._auxiliary_direct_client = None
         for key, value in settings.items():
             self.config[key] = value
@@ -420,13 +482,24 @@ class LLMIdentifyPlugin(Star):
             "auxiliary_judge_model": self.auxiliary_judge_model,
             "auxiliary_judge_has_api_key": bool(self.auxiliary_judge_api_key),
             "auxiliary_judge_items": list(AUXILIARY_JUDGE_ITEMS),
+            "enable_voluntary_data_reporting": self.enable_voluntary_data_reporting,
             "contribution_export_dir": self.contribution_export_dir,
             "contribution_issue_url": self.contribution_issue_url,
             "strict_mode": self.strict_mode,
         }
 
-    def _prepare_contribution_candidate(self, *, base_url: str, report: AuditReport, traces: list[Any]) -> None:
-        endpoint = detect_official_endpoint(base_url)
+    def _prepare_contribution_candidate(
+        self,
+        *,
+        report: AuditReport,
+        traces: list[Any],
+        base_url: str | None = None,
+        official_endpoint: OfficialEndpoint | None = None,
+    ) -> None:
+        if not self.enable_voluntary_data_reporting:
+            self._clear_contribution_candidate()
+            return
+        endpoint = official_endpoint or detect_official_endpoint(base_url or "")
         if endpoint is None:
             self._clear_contribution_candidate()
             return
@@ -439,17 +512,39 @@ class LLMIdentifyPlugin(Star):
             official_endpoint=endpoint,
             plugin_version="0.5.0",
         )
+        self.last_contribution_report_created_at = int(report.created_at or 0)
 
     def _clear_contribution_candidate(self) -> None:
         self.last_official_endpoint = None
         self.last_contribution_package = None
+        self.last_contribution_report_created_at = None
+
+    def _finish_active_audit(self, task: asyncio.Task[Any] | None) -> None:
+        if self._active_audit_task is not task:
+            return
+        self._active_audit_task = None
+        self._active_trace_store = None
+        self._audit_started_at = None
+        self._running = False
+
+    def _clear_unfinished_audit_data(self) -> None:
+        if self._active_trace_store is not None:
+            self._active_trace_store.traces.clear()
+        self._active_trace_store = None
+        self._active_audit_task = None
+        self._audit_started_at = None
+        self._running = False
+        self._clear_contribution_candidate()
 
     def _contribution_status(self) -> dict[str, Any]:
         endpoint = self.last_official_endpoint
+        available = self.enable_voluntary_data_reporting and self.last_contribution_package is not None
         return {
-            "available": self.last_contribution_package is not None,
+            "enabled": self.enable_voluntary_data_reporting,
+            "available": available,
             "endpoint": asdict(endpoint) if endpoint else None,
-            "issue_url": build_github_issue_url(self.last_contribution_package, self.contribution_issue_url) if self.last_contribution_package else "",
+            "report_created_at": self.last_contribution_report_created_at,
+            "issue_url": build_github_issue_url(self.last_contribution_package, self.contribution_issue_url) if available else "",
             "export_dir": str(self._contribution_export_root()),
             "privacy": "Voluntary export only. Sanitized aggregate evidence excludes raw prompts, completions, API keys, headers, account identifiers, IPs, and private content.",
         }

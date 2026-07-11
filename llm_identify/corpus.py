@@ -13,6 +13,8 @@ from .utils import clamp
 
 
 EMBEDDED_CORPUS_PATH = Path(__file__).resolve().parent / "data" / "trusted_reference_corpus.json"
+COMMUNITY_REPOSITORY_PATH = Path(__file__).resolve().parent / "data" / "trusted_references"
+COMMUNITY_ACCEPTED_PATH = COMMUNITY_REPOSITORY_PATH / "data" / "accepted"
 
 
 @dataclass(frozen=True)
@@ -61,7 +63,13 @@ class TrustedCorpusLoader:
 
     def _load_json(self) -> tuple[dict[str, Any], str]:
         if self.source.path:
-            payload = Path(self.source.path).expanduser().read_text(encoding="utf-8-sig")
+            path = Path(self.source.path).expanduser()
+            if path.is_dir():
+                data = _load_accepted_directory(path, self.source.source_id)
+                payload = json.dumps(data, ensure_ascii=True, sort_keys=True)
+                self._verify_integrity(payload)
+                return data, "ok"
+            payload = path.read_text(encoding="utf-8-sig")
             self._verify_integrity(payload)
             data = json.loads(payload)
             return _object(data), "ok"
@@ -131,9 +139,12 @@ class TrustedCorpusLoader:
 
 
 def default_trusted_corpus_sources() -> list[TrustedCorpusSource]:
+    sources: list[TrustedCorpusSource] = []
     if EMBEDDED_CORPUS_PATH.exists():
-        return [TrustedCorpusSource(source_id="embedded_trusted_reference", path=str(EMBEDDED_CORPUS_PATH))]
-    return []
+        sources.append(TrustedCorpusSource(source_id="embedded_trusted_reference", path=str(EMBEDDED_CORPUS_PATH)))
+    if COMMUNITY_ACCEPTED_PATH.is_dir():
+        sources.append(TrustedCorpusSource(source_id="community_trusted_references", path=str(COMMUNITY_ACCEPTED_PATH)))
+    return sources
 
 
 def load_trusted_corpora(
@@ -153,6 +164,83 @@ def _object(data: Any) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("trusted corpus root must be a JSON object")
     return data
+
+
+def _load_accepted_directory(path: Path, source_id: str) -> dict[str, Any]:
+    records: list[dict[str, Any]] = []
+    profiles: list[dict[str, Any]] = []
+    for json_path in sorted(path.rglob("*.json")):
+        raw = _object(json.loads(json_path.read_text(encoding="utf-8-sig")))
+        if isinstance(raw.get("model_profiles"), list):
+            profiles.extend(item for item in raw["model_profiles"] if isinstance(item, dict))
+        corpus_records = _records(raw)
+        if corpus_records:
+            records.extend(corpus_records)
+        elif _is_corpus_row(raw):
+            records.append(raw)
+        elif _is_candidate_package(raw):
+            records.append(_candidate_to_corpus_row(raw))
+        else:
+            raise ValueError(f"unsupported accepted reference format: {json_path}")
+
+    digest_payload = json.dumps({"model_profiles": profiles, "accepted_references": records}, ensure_ascii=True, sort_keys=True)
+    digest = hashlib.sha256(digest_payload.encode("utf-8")).hexdigest()[:12]
+    return {
+        "schema_version": "1.0.0",
+        "corpus_version": f"community-{digest}",
+        "probe_pack_version": "community-mixed",
+        "release": "git-submodule",
+        "source_attribution": [
+            {
+                "id": source_id,
+                "kind": "maintainer_reviewed_community_submodule",
+                "notes": "Only records under data/accepted are loaded; candidate submissions are excluded.",
+            }
+        ],
+        "provider_families": [
+            {"id": "openai_like", "name": "OpenAI-like"},
+            {"id": "anthropic_like", "name": "Anthropic-like"},
+            {"id": "google_like", "name": "Google/Gemini-like"},
+            {"id": "open_source_or_relay", "name": "Open-source or relay-shaped"},
+            {"id": "unknown", "name": "Unknown"},
+        ],
+        "model_profiles": profiles,
+        "accepted_references": records,
+    }
+
+
+def _is_corpus_row(raw: dict[str, Any]) -> bool:
+    return bool(raw.get("record_id") and raw.get("provider") and (raw.get("model_claim") or raw.get("model_id")))
+
+
+def _is_candidate_package(raw: dict[str, Any]) -> bool:
+    return raw.get("sample_type") == "trusted_reference_candidate" and isinstance(raw.get("endpoint"), dict) and isinstance(raw.get("model"), dict)
+
+
+def _candidate_to_corpus_row(raw: dict[str, Any]) -> dict[str, Any]:
+    endpoint = raw["endpoint"]
+    model = raw["model"]
+    versions = raw.get("versions") if isinstance(raw.get("versions"), dict) else {}
+    review = raw.get("review") if isinstance(raw.get("review"), dict) else {}
+    identity = json.dumps(raw, ensure_ascii=True, sort_keys=True)
+    return {
+        "record_id": str(review.get("record_id") or f"community_{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:20]}"),
+        "schema_version": "1.0.0",
+        "provider": str(endpoint.get("provider") or "unknown"),
+        "trust_tier": str(review.get("trust_tier") or raw.get("trust_tier") or "T2").upper(),
+        "endpoint_class": {
+            "host": str(endpoint.get("official_host") or ""),
+            "path_family": str(endpoint.get("matched_path") or "/"),
+            "official_match": True,
+        },
+        "model_claim": str(model.get("claimed_by_official_endpoint") or "unknown"),
+        "probe_pack_version": str(versions.get("probe_pack") or "unknown"),
+        "sanitizer_version": str(versions.get("sanitizer") or "unknown"),
+        "accepted_in_release": str(review.get("accepted_in_release") or "community-submodule"),
+        "fingerprint_vector": raw.get("fingerprint_vector") or {},
+        "capability_scores": raw.get("capability_scores") or {},
+        "source_task_ref": raw.get("task_ref"),
+    }
 
 
 def _metadata(raw: dict[str, Any], source_id: str, status: str) -> dict[str, Any]:

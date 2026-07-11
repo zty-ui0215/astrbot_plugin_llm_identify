@@ -76,6 +76,12 @@
     "hint": "Used when auxiliary_judge_mode is openai_compatible. Example: gpt-4.1-mini",
     "default": ""
   },
+  "enable_voluntary_data_reporting": {
+    "description": "Allow optional data reporting",
+    "type": "bool",
+    "hint": "When enabled, official-endpoint audits may show a voluntary sanitized fingerprint contribution prompt after completion.",
+    "default": false
+  },
   "contribution_export_dir": {
     "description": "Voluntary contribution export directory",
     "type": "string",
@@ -86,7 +92,7 @@
     "description": "Voluntary contribution GitHub issue URL",
     "type": "string",
     "hint": "Issue creation URL for the trusted reference candidate repository.",
-    "default": "https://github.com/zty-ui0215/llm-identify-trusted-references/issues/new"
+    "default": "https://github.com/zty-ui0215/astrbot_llm_identify_trusted_references/issues/new"
   },
   "enable_context_probe": {
     "description": "Context probes",

@@ -54,6 +54,7 @@ def build_trace_summary(traces: list[Trace]) -> dict[str, Any]:
     usage_count = 0
     latencies: list[int] = []
     raw_types: dict[str, int] = {}
+    generation_errors: dict[str, int] = {}
     for trace in traces:
         by_category[trace.category] = by_category.get(trace.category, 0) + 1
         if trace.usage is not None:
@@ -62,6 +63,10 @@ def build_trace_summary(traces: list[Trace]) -> dict[str, Any]:
             latencies.append(trace.latency_ms)
         if trace.reply.raw_type:
             raw_types[trace.reply.raw_type] = raw_types.get(trace.reply.raw_type, 0) + 1
+        generation_error = trace.reply.meta.get("generation_error")
+        if isinstance(generation_error, dict):
+            error_type = str(generation_error.get("type") or "Error")
+            generation_errors[error_type] = generation_errors.get(error_type, 0) + 1
     return {
         "trace_count": len(traces),
         "by_category": by_category,
@@ -70,4 +75,6 @@ def build_trace_summary(traces: list[Trace]) -> dict[str, Any]:
         "latency_ms_max": max(latencies) if latencies else None,
         "latency_ms_avg": round(sum(latencies) / len(latencies), 2) if latencies else None,
         "raw_types": raw_types,
+        "generation_error_count": sum(generation_errors.values()),
+        "generation_errors_by_type": generation_errors,
     }

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Awaitable, Callable
 
 from .adapters.base import GenerateAdapter
-from .capture import TraceStore
+from .capture import Trace, TraceStore
 from .branches import analyze_branch_evidence, branch_payload
 from .corpus import TrustedCorpusSource
 from .evidence import ExternalJudge, PublicKnowledgeSource, auxiliary_judge_prompt, collect_evidence_sources, parse_auxiliary_judgment
@@ -110,7 +110,10 @@ class AuditEngine:
             thresholds=self.options.thresholds or {},
             evidence_sources=evidence_run.sources if evidence_run else [],
             judge_invocations=evidence_run.judge_invocations if evidence_run else [],
-            degraded_modes=evidence_run.degraded_modes if evidence_run else [],
+            degraded_modes=[
+                *(evidence_run.degraded_modes if evidence_run else []),
+                *_generation_degraded_modes(self.adapter.trace_store.traces),
+            ],
             corpus_metadata=evidence_run.corpus_metadata if evidence_run else [],
             strict_mode=self.options.strict_mode,
             language=self.options.language,
@@ -154,4 +157,16 @@ def _auxiliary_probe_result(method: MethodFingerprint) -> ProbeResult:
         detail=f"External evidence method {method.method} points most strongly to {top_family}.",
         evidence={"family_scores": method.family_scores, "quality": method.quality, **method.evidence},
     )
+
+
+def _generation_degraded_modes(traces: list[Trace]) -> list[str]:
+    degraded: list[str] = []
+    for trace in traces:
+        error = trace.reply.meta.get("generation_error")
+        if not isinstance(error, dict):
+            continue
+        error_type = str(error.get("type") or "Error")
+        message = str(error.get("message") or "Probe request failed.")
+        degraded.append(f"probe:{trace.probe_id}: {error_type}: {message}")
+    return degraded
 

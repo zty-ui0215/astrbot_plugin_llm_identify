@@ -1,6 +1,7 @@
 # LLM Identify
 
 **GitHub language links:** [中文](#中文) | [English](#english) | [日本語](#日本語)
+
 请注意，不要在astrbot内点击以上三个语言切换键，会导致文档异常退出
 
 

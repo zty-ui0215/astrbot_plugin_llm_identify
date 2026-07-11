@@ -5,7 +5,7 @@ import unittest
 
 from llm_identify.contribution.evidence_schema import build_evidence_package
 from llm_identify.contribution.github_issue_submitter import build_github_issue_url
-from llm_identify.contribution.official_endpoint_detector import detect_official_endpoint
+from llm_identify.contribution.official_endpoint_detector import detect_official_endpoint, detect_official_provider_endpoint
 from llm_identify.contribution.sanitizer import sanitize_value
 from llm_identify.dynamic_fingerprint import DynamicFingerprintStore, build_feature_vector, cosine_similarity
 from tests.test_task_storage_privacy_cli import minimal_report
@@ -38,7 +38,33 @@ class ContributionAndDynamicFingerprintTests(unittest.TestCase):
         self.assertNotIn("base_url", text)
         self.assertIn("probe_a", package["probe_ids"])
         issue_url = build_github_issue_url(package)
-        self.assertIn("github.com/zty-ui0215/llm-identify-trusted-references", issue_url)
+        self.assertIn("github.com/zty-ui0215/astrbot_llm_identify_trusted_references", issue_url)
+
+    def test_astrbot_provider_config_detects_current_official_endpoint(self) -> None:
+        provider = type("Provider", (), {"provider_config": {"api_base": "https://api.openai.com/v1", "model": "gpt-4o"}})()
+        endpoint = detect_official_provider_endpoint(provider)
+        self.assertIsNotNone(endpoint)
+        self.assertEqual(endpoint.provider, "openai")
+
+    def test_astrbot_provider_client_default_base_url_is_detected(self) -> None:
+        client = type("Client", (), {"base_url": "https://api.openai.com/v1/"})()
+        provider = type("Provider", (), {"provider_config": {}, "client": client})()
+        endpoint = detect_official_provider_endpoint(provider)
+        self.assertIsNotNone(endpoint)
+        self.assertEqual(endpoint.host, "api.openai.com")
+
+    def test_astrbot_proxy_provider_does_not_match_official_endpoint(self) -> None:
+        provider = type("Provider", (), {"provider_config": {"api_base": "https://api.openai.com.proxy.example/v1"}})()
+        self.assertIsNone(detect_official_provider_endpoint(provider))
+
+    def test_effective_client_proxy_takes_priority_over_stale_official_config(self) -> None:
+        client = type("Client", (), {"base_url": "https://relay.example/v1"})()
+        provider = type(
+            "Provider",
+            (),
+            {"provider_config": {"api_base": "https://api.openai.com/v1"}, "client": client},
+        )()
+        self.assertIsNone(detect_official_provider_endpoint(provider))
 
     def test_sanitizer_removes_private_fields(self) -> None:
         clean = sanitize_value({"api_key": "sk-secret", "headers": {"authorization": "Bearer x"}, "metric": 0.4, "email": "a@example.com"})

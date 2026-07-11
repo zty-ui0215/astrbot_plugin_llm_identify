@@ -4,14 +4,18 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LLM Identify</title>
-  <link rel="stylesheet" href="./app.css?v=20260709-4" />
+  <link rel="stylesheet" href="./app.css?v=20260711-16" />
 </head>
 <body>
   <main class="shell">
+    <div id="normalPanel">
     <header class="topbar">
-      <div>
-        <p class="eyebrow" data-i18n="eyebrow">LLM IDENTIFY</p>
-        <h1 data-i18n="heading">Endpoint Audit</h1>
+      <div class="title-brand">
+        <img class="title-brand-image" src="./endpoint-audit.png" alt="" aria-hidden="true" />
+        <div class="title-copy">
+          <p class="eyebrow" data-i18n="eyebrow">LLM IDENTIFY</p>
+          <h1 data-i18n="heading">Endpoint Audit</h1>
+        </div>
       </div>
       <div class="topbar-actions">
         <label class="language-control" title="Language">
@@ -28,7 +32,7 @@
 
     <nav class="page-tabs" aria-label="Panel views">
       <button id="auditTabBtn" class="tab-btn active" type="button" data-view="audit" data-i18n="audit_tab">Audit</button>
-      <button id="settingsTabBtn" class="tab-btn secondary-btn" type="button" data-view="settings" data-i18n="settings_tab">Settings</button>
+        <button id="settingsTabBtn" class="tab-btn" type="button" data-view="settings" data-i18n="settings_tab">Settings</button>
     </nav>
 
     <section class="summary-grid">
@@ -152,7 +156,7 @@
             </label>
             <label>
               <span data-i18n="api_key">API Key</span>
-              <input id="auxApiKey" type="password" placeholder="Leave blank to keep saved key" autocomplete="off" />
+              <input id="auxApiKey" type="password" placeholder="Leave blank to keep saved key" data-i18n-placeholder="api_key_placeholder" autocomplete="off" />
             </label>
             <label>
               <span data-i18n="model">Model</span>
@@ -168,23 +172,63 @@
           </div>
         </div>
       </section>
+      <section class="workbench settings-section">
+        <div class="workbench-head">
+          <div>
+            <h2 data-i18n="data_reporting_settings">Optional Data Reporting</h2>
+            <p data-i18n="data_reporting_hint">Choose whether to show a voluntary prompt for sharing sanitized official-model fingerprint data after an eligible audit.</p>
+          </div>
+        </div>
+        <div class="mode-panel">
+          <label class="checkbox-row">
+            <input id="dataReportConsent" type="checkbox" />
+            <span data-i18n="enable_data_reporting">Allow optional data reporting</span>
+          </label>
+        </div>
+      </section>
+    </section>
+    </div>
+
+    <section id="auditRunningView" class="audit-running-view" aria-live="polite" hidden>
+      <div class="audit-orbit" aria-hidden="true">
+        <span class="audit-ball audit-ball-one"></span>
+        <span class="audit-ball audit-ball-two"></span>
+        <span class="audit-ball audit-ball-three"></span>
+      </div>
+      <p id="auditElapsedText" class="audit-elapsed">Audit in progress, elapsed 0 seconds</p>
+      <button id="stopAuditBtn" class="danger-btn" type="button" data-i18n="stop_audit">Stop</button>
     </section>
   </main>
 
   <div id="contributionModal" class="modal-backdrop" hidden>
     <section class="modal" role="dialog" aria-modal="true" aria-labelledby="contributionModalTitle">
+      <button id="closeContributionBtn" class="modal-close" type="button" aria-label="Close" data-i18n-aria-label="close" onclick="hideContributionModal(); return false;">×</button>
       <div>
         <h2 id="contributionModalTitle" data-i18n="contribution_title">Voluntary official fingerprint contribution</h2>
         <p id="contributionText" data-i18n="contribution_hint">A sanitized candidate package is available for this official endpoint audit.</p>
       </div>
       <div class="modal-actions">
-        <button id="dismissContributionBtn" type="button" class="secondary-btn" data-i18n="not_now">Not now</button>
-        <button id="pushContributionBtn" type="button" data-i18n="push_contribution">Submit</button>
+        <button id="dismissContributionBtn" type="button" class="secondary-btn" data-i18n="not_now" onclick="hideContributionModal(); return false;">No, thanks</button>
+        <button id="pushContributionBtn" type="button" data-i18n="push_contribution" onclick="pushContribution(); return false;">OK</button>
       </div>
     </section>
   </div>
 
-  <script src="./app.js?v=20260709-5"></script>
+  <div id="stopConfirmModal" class="modal-backdrop" hidden>
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="stopConfirmTitle">
+      <button id="closeStopConfirmBtn" class="modal-close" type="button" aria-label="Close" data-i18n-aria-label="close">×</button>
+      <div>
+        <h2 id="stopConfirmTitle" data-i18n="stop_confirm_title">Stop the audit?</h2>
+        <p data-i18n="stop_confirm_hint">All active audits will be terminated and unfinished data will be cleared.</p>
+      </div>
+      <div class="modal-actions">
+        <button id="cancelStopBtn" type="button" class="secondary-btn" data-i18n="cancel">Cancel</button>
+        <button id="confirmStopBtn" type="button" class="danger-btn" data-i18n="confirm_stop">Confirm stop</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="./app.js?v=20260711-14"></script>
 </body>
 </html>
 

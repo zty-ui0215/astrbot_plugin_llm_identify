@@ -79,6 +79,35 @@ class EngineModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("auxiliary_llm_judge", report.fingerprint_method_scores)
         self.assertTrue(any(item.name == "auxiliary_llm_judge" for item in report.probe_results))
 
+    async def test_full_mode_returns_report_when_a_fingerprint_probe_times_out(self) -> None:
+        timed_out = False
+
+        async def flaky_generate(prompt: str, **kwargs):
+            nonlocal timed_out
+            if "Audit nonce: fp-" in prompt and not timed_out:
+                timed_out = True
+                raise TimeoutError
+            return await fake_generate(prompt, **kwargs)
+
+        adapter = GenerateAdapter("fake", "provider-a", "gpt-test", flaky_generate, TraceStore())
+        report = await AuditEngine(
+            adapter,
+            AuditOptions(
+                enable_protocol_probe=True,
+                enable_token_probe=True,
+                enable_context_probe=True,
+                enable_fingerprint_probe=True,
+                fingerprint_repeats=1,
+            ),
+        ).run()
+
+        self.assertTrue(timed_out)
+        self.assertTrue(report.probe_results)
+        self.assertEqual(report.trace_summary["generation_error_count"], 1)
+        self.assertEqual(report.trace_summary["generation_errors_by_type"], {"TimeoutError": 1})
+        self.assertTrue(any("TimeoutError" in item for item in report.degraded_modes))
+        self.assertTrue(any(trace.reply.raw_type == "generation_error" for trace in adapter.trace_store.traces))
+
 
 if __name__ == "__main__":
     unittest.main()
